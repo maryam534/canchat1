@@ -1,0 +1,73 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+# package-lock.json - Keep this tracked (standard practice)
+
+# ColdFusion
+Application.cfc.bak
+*.cfc.bak
+*.cfm.bak
+
+# Temporary files
+temp/
+tmp/
+_tmp_*.html
+_tika_test.html
+*.tmp
+*.log
+
+# Profile directories
+pp-profile/
+pw-profile/
+
+# Uploads - user uploaded files, don't track
+uploads/
+
+# Backup files
+*.backup
+*.backup.js
+*.backup.cfm
+*_backup_*.cfm
+*-old.cfm
+rag-old.cfm
+
+# Data files - generated/scraped data, don't track
+allAuctionLotsData_final/
+allAuctionLotsData_inprogress/
+
+# Build and compiled files
+*.class
+*.jar
+dist/
+build/
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Test output
+test_output/
+coverage/
+
+# Server configuration (if contains sensitive data)
+# server.json
