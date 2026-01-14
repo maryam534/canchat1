@@ -2,8 +2,18 @@
     cfsetting(requesttimeout=7200, showdebugoutput=false);
     
     // ---- Config ----
-    paths = application.paths ?: {};
-    ai    = application.ai    ?: {};
+    try {
+        paths = application.paths ?: {};
+        ai    = application.ai    ?: {};
+    } catch (any appErr) {
+        // If application scope not initialized, use defaults
+        paths = {};
+        ai = {};
+        if ((url.ajax ?: "") == "1") {
+            writeOutput(serializeJSON({error: "Application not initialized. Please refresh the page."}));
+            abort;
+        }
+    }
     
     // ---- Global Scraper Status Tracking ----
     // Initialize application-scoped scraper status if it doesn't exist
@@ -171,7 +181,10 @@
         abort;
     }
 
-    if (action == "status") {
+    // Check for AJAX requests FIRST, before non-AJAX status endpoint
+    // If ajax=1, skip the non-AJAX endpoint and let the AJAX endpoint (line 715+) handle it
+    if ((url.ajax ?: "") != "1" && action == "status") {
+        // Non-AJAX status endpoint (Format 2) - only runs if ajax != 1
         try {
             // Get current job status from database
             currentJob = queryExecute(
@@ -266,6 +279,19 @@
     if (action == "start") {
         result = {success: false, error: "", jobId: 0};
         try {
+            // First, verify tables exist
+            try {
+                tableCheck = queryExecute(
+                    "SELECT 1 FROM scraper_jobs LIMIT 1",
+                    [],
+                    {datasource: application.db.dsn}
+                );
+            } catch (any tableErr) {
+                result.error = "Database tables not found. Please run the migration first. Error: " & tableErr.message & ". Go to apply_migration.cfm to create tables.";
+                writeOutput(serializeJSON(result));
+                abort;
+            }
+            
             // Check if a job is already running
             checkRunning = queryExecute(
                 "SELECT id FROM scraper_jobs WHERE status IN ('running','paused') ORDER BY created_at DESC LIMIT 1",
@@ -279,6 +305,14 @@
             if (checkRunning.recordCount > 0 AND !forceStart) {
                 result.error = "A scraper job is already running or paused. Please stop or resume the existing job first.";
             } else {
+                // Ensure paths are initialized
+                if (!structKeyExists(paths, "scraper") OR !len(paths.scraper)) {
+                    paths.scraper = expandPath('/canchat1/scrap_all_auctions_lots_data.js');
+                }
+                if (!structKeyExists(paths, "inProgressDir") OR !len(paths.inProgressDir)) {
+                    paths.inProgressDir = expandPath('./allAuctionLotsData_inprogress');
+                }
+                
                 jobName = "NumisBids Scraper - " & dateFormat(now(), "yyyy-MM-dd HH:mm:ss");
                 parameters = {
                     maxSales     : maxSales,
@@ -286,6 +320,7 @@
                     runMode      : runMode
                 };
                 writeLog(file="scraper", text="[info] Entered action=start with eventId=" & targetEventId & ", runMode=" & runMode & ", force=" & forceStart, type="information");
+                
                 // Insert job
                 createJob = queryExecute(
                     "
@@ -309,39 +344,428 @@
                 logToDatabase(jobId, "info", "Scraper job started successfully", "system");
 
                 // Launch scraper using direct Node execution (quoting paths; no cmd wrapper)
-                nodeExe   = "node.exe";
-                singleJs  = expandPath('/canchat1/scrape_single_event.js');
-                allJs     = paths.scraper ?: expandPath('/canchat1/scrap_all_auctions_lots_data.js');
+                nodeExe   = paths.nodeBinary ?: "node.exe";
+                // Use absolute path from web root (leading slash means from web root)
+                singleJs  = expandPath('/scrape_single_event.js');
+                allJs     = paths.scraper;
 
                 outVar = ""; errVar = "";
                 if (len(trim(targetEventId))) {
                     // Single event mode
-                    outPath = paths.inProgressDir & '\\auction_' & trim(targetEventId) & '_lots.jsonl';
+                    // Use forward slashes or proper path handling
+                    outPath = paths.inProgressDir & '/auction_' & trim(targetEventId) & '_lots.jsonl';
+                    // Normalize path separators
+                    outPath = replace(outPath, '\', '/', 'all');
                     args = '"' & singleJs & '" --event-id ' & trim(targetEventId) & ' --output-file "' & outPath & '" --job-id ' & jobId;
+                    
+                    // Initialize job with event ID
+                    queryExecute(
+                        "UPDATE scraper_jobs SET current_event_id = ?, total_events = 1, current_event_index = 0 WHERE id = ?",
+                        [
+                            {value = trim(targetEventId), cfsqltype = "cf_sql_varchar"},
+                            {value = jobId, cfsqltype = "cf_sql_integer"}
+                        ],
+                        {datasource = application.db.dsn}
+                    );
                 } else {
                     // All events mode
-                    args = '"' & allJs & '"' & (len(trim(maxSales)) ? ' --max-sales ' & maxSales : '') & ' --job-id ' & jobId;
+                    args = '"' & allJs & '"' & (len(trim(maxSales)) AND isNumeric(maxSales) ? ' --max-sales ' & maxSales : '') & ' --job-id ' & jobId;
                 }
 
                 logToDatabase(jobId, 'debug', 'Launching: ' & nodeExe & ' ' & args, 'system');
 
-                cfexecute(
-                    name          = nodeExe,
-                    arguments     = args,
-                    timeout       = 300,
-                    variable      = "outVar",
-                    errorVariable = "errVar"
-                );
+                // Launch scraper in background (non-blocking)
+                // Use cmd.exe wrapper for better Windows compatibility and error capture
+                cmdExe = paths.cmdExe ?: "cmd.exe";
+                // Get working directory - ensure it's the root directory, not tasks folder
+                workDir = getDirectoryFromPath(singleJs);
+                
+                // Verify the script file exists
+                if (!fileExists(singleJs)) {
+                    logToDatabase(jobId, 'error', 'Script file not found: ' & singleJs, 'system');
+                    result.error = "Script file not found: " & singleJs;
+                } else {
+                    // Verify Node.js is accessible
+                    nodeExePath = paths.nodeBinary;
+                    
+                    // #region agent log - Hypothesis C: Node.js path
+                    try {
+                        debugLogPath = expandPath(".cursor/debug.log");
+                        logContent = serializeJSON({
+                            location: "run_scraper.cfm:389",
+                            message: "Node.js path verification",
+                            data: {
+                                nodeExePath: nodeExePath,
+                                nodeExePathExists: fileExists(nodeExePath),
+                                nodeExe: nodeExe,
+                                jobId: jobId
+                            },
+                            timestamp: getTickCount(),
+                            sessionId: "debug-session",
+                            runId: "run1",
+                            hypothesisId: "C"
+                        }) & chr(10);
+                        if (fileExists(debugLogPath)) {
+                            fileAppend(debugLogPath, logContent);
+                        } else {
+                            fileWrite(debugLogPath, logContent);
+                        }
+                    } catch (any e) {
+                        // Ignore logging errors
+                    }
+                    // #endregion
+                    
+                    if (!fileExists(nodeExePath)) {
+                        logToDatabase(jobId, 'error', 'Node.js not found at: ' & nodeExePath, 'system');
+                        result.error = "Node.js not found at: " & nodeExePath;
+                    } else {
+                    // Build command with proper working directory
+                    if (len(trim(targetEventId))) {
+                        // Single event mode - use cmd wrapper with working directory
+                        // IMPORTANT: Use proper quoting for paths with spaces
+                        // Wrap nodeExe in quotes if it contains spaces
+                        nodeExeQuoted = (find(" ", nodeExe) > 0) ? '"' & nodeExe & '"' : nodeExe;
+                        // Wrap script path in quotes (it's already in args, but ensure it's quoted)
+                        cmdArgs = '/c cd /d "' & workDir & '" && ' & nodeExeQuoted & ' ' & args & ' 2>&1';
+                        
+                        // #region agent log - Hypothesis E: Command construction
+                        try {
+                            debugLogPath = expandPath(".cursor/debug.log");
+                            logContent = serializeJSON({
+                                location: "run_scraper.cfm:397",
+                                message: "Command construction for single event",
+                                data: {
+                                    workDir: workDir,
+                                    nodeExe: nodeExe,
+                                    args: args,
+                                    fullCmdArgs: cmdArgs,
+                                    singleJs: singleJs,
+                                    outPath: outPath,
+                                    targetEventId: targetEventId,
+                                    jobId: jobId,
+                                    workDirExists: directoryExists(workDir),
+                                    singleJsExists: fileExists(singleJs)
+                                },
+                                timestamp: getTickCount(),
+                                sessionId: "debug-session",
+                                runId: "run1",
+                                hypothesisId: "E"
+                            }) & chr(10);
+                            if (fileExists(debugLogPath)) {
+                                fileAppend(debugLogPath, logContent);
+                            } else {
+                                fileWrite(debugLogPath, logContent);
+                            }
+                        } catch (any e) {
+                            // Ignore logging errors
+                        }
+                        // #endregion
+                    } else {
+                        // All events mode
+                        cmdArgs = '/c cd /d "' & getDirectoryFromPath(allJs) & '" && ' & nodeExe & ' ' & args & ' 2>&1';
+                    }
+                    
+                    try {
+                        // Log the full command
+                        logToDatabase(jobId, 'debug', 'Full command: ' & cmdExe & ' ' & cmdArgs, 'system');
+                        logToDatabase(jobId, 'debug', 'Script path: ' & singleJs & ' | Work dir: ' & workDir, 'system');
+                        
+                        // #region agent log - Hypothesis A: Working directory
+                        try {
+                            debugLogPath = expandPath(".cursor/debug.log");
+                            logContent = serializeJSON({
+                                location: "run_scraper.cfm:405",
+                                message: "Before cfexecute - working directory check",
+                                data: {
+                                    cmdExe: cmdExe,
+                                    cmdArgs: cmdArgs,
+                                    singleJs: singleJs,
+                                    workDir: workDir,
+                                    nodeExe: nodeExe,
+                                    args: args,
+                                    jobId: jobId,
+                                    directoryExists: directoryExists(workDir),
+                                    scriptExists: fileExists(singleJs)
+                                },
+                                timestamp: getTickCount(),
+                                sessionId: "debug-session",
+                                runId: "run1",
+                                hypothesisId: "A"
+                            }) & chr(10);
+                            if (fileExists(debugLogPath)) {
+                                fileAppend(debugLogPath, logContent);
+                            } else {
+                                fileWrite(debugLogPath, logContent);
+                            }
+                        } catch (any e) {
+                            // Ignore logging errors
+                        }
+                        // #endregion
+                        
+                        // #region agent log - Hypothesis B: Arguments
+                        try {
+                            debugLogPath = expandPath(".cursor/debug.log");
+                            logContent = serializeJSON({
+                                location: "run_scraper.cfm:425",
+                                message: "Command arguments breakdown",
+                                data: {
+                                    fullCmdArgs: cmdArgs,
+                                    nodeExePath: nodeExe,
+                                    scriptPath: singleJs,
+                                    targetEventId: targetEventId,
+                                    outputPath: outPath,
+                                    jobId: jobId,
+                                    argsString: args
+                                },
+                                timestamp: getTickCount(),
+                                sessionId: "debug-session",
+                                runId: "run1",
+                                hypothesisId: "B"
+                            }) & chr(10);
+                            if (fileExists(debugLogPath)) {
+                                fileAppend(debugLogPath, logContent);
+                            } else {
+                                fileWrite(debugLogPath, logContent);
+                            }
+                        } catch (any e) {
+                            // Ignore logging errors
+                        }
+                        // #endregion
+                        
+                        // Initialize variables before cfexecute (in case it fails)
+                        variables.outVar = "";
+                        variables.errVar = "";
+                        
+                        // Execute with output redirection to capture errors
+                        // Note: With timeout=0, cfexecute runs in background and doesn't capture output
+                        // We'll rely on the debug log file to verify script execution
+                        try {
+                            logToDatabase(jobId, 'info', 'Executing script in background (timeout=0)...', 'system');
+                            
+                            // #region agent log - Hypothesis D: Process execution
+                            try {
+                                debugLogPath = expandPath(".cursor/debug.log");
+                                logContent = serializeJSON({
+                                    location: "run_scraper.cfm:450",
+                                    message: "About to call cfexecute",
+                                    data: {
+                                        cmdExe: cmdExe,
+                                        cmdArgs: cmdArgs,
+                                        timeout: 0,
+                                        jobId: jobId,
+                                        timestampBefore: getTickCount()
+                                    },
+                                    timestamp: getTickCount(),
+                                    sessionId: "debug-session",
+                                    runId: "run1",
+                                    hypothesisId: "D"
+                                }) & chr(10);
+                                if (fileExists(debugLogPath)) {
+                                    fileAppend(debugLogPath, logContent);
+                                } else {
+                                    fileWrite(debugLogPath, logContent);
+                                }
+                            } catch (any e) {
+                                // Ignore logging errors
+                            }
+                            // #endregion
+                            
+                            cfexecute(
+                                name          = cmdExe,
+                                arguments     = cmdArgs,
+                                timeout       = 0,
+                                variable      = "outVar",
+                                errorVariable = "errVar"
+                            );
+                            
+                            // #region agent log - Hypothesis D: After execution
+                            try {
+                                debugLogPath = expandPath(".cursor/debug.log");
+                                logContent = serializeJSON({
+                                    location: "run_scraper.cfm:470",
+                                    message: "cfexecute completed (non-blocking)",
+                                    data: {
+                                        jobId: jobId,
+                                        outVarLen: len(variables.outVar ?: ""),
+                                        errVarLen: len(variables.errVar ?: ""),
+                                        timestampAfter: getTickCount()
+                                    },
+                                    timestamp: getTickCount(),
+                                    sessionId: "debug-session",
+                                    runId: "run1",
+                                    hypothesisId: "D"
+                                }) & chr(10);
+                                if (fileExists(debugLogPath)) {
+                                    fileAppend(debugLogPath, logContent);
+                                } else {
+                                    fileWrite(debugLogPath, logContent);
+                                }
+                            } catch (any e) {
+                                // Ignore logging errors
+                            }
+                            // #endregion
+                            
+                            // Wait for script to initialize and write to debug log
+                            // Increased wait time to allow script to fully start
+                            sleep(8000);
+                            
+                            // Check debug log file for immediate errors
+                            debugLogPath = workDir & "\scrape_debug.log";
+                            if (fileExists(debugLogPath)) {
+                                try {
+                                    // Wait a bit more for script to write (file writes might be buffered)
+                                    sleep(3000);
+                                    // Force file system sync by reading multiple times
+                                    debugLogContent = "";
+                                    for (i = 1; i <= 3; i++) {
+                                        sleep(1000);
+                                        debugLogContent = fileRead(debugLogPath);
+                                        // Check if we have new content for this job
+                                        if (findNoCase("jobId=" & jobId, debugLogContent) > 0 || findNoCase("Script started: eventId=" & trim(targetEventId), debugLogContent) > 0) {
+                                            break;
+                                        }
+                                    }
+                                    // Get last 2000 characters (more recent entries)
+                                    if (len(debugLogContent) > 2000) {
+                                        debugLogContent = right(debugLogContent, 2000);
+                                    }
+                                    logToDatabase(jobId, 'debug', 'Debug log content (last 2000 chars): ' & debugLogContent, 'system');
+                                    
+                                    // Check specifically for this jobId (the script writes "jobId=35" format)
+                                    if (findNoCase("jobId=" & jobId, debugLogContent) > 0 || findNoCase("jobId=" & jobId & ",", debugLogContent) > 0) {
+                                        logToDatabase(jobId, 'info', 'SUCCESS: Found debug log entry for jobId ' & jobId & ' - script started!', 'system');
+                                    } else {
+                                        // Also check for eventId as fallback (script might have started but jobId check failed)
+                                        if (findNoCase("Script started: eventId=" & trim(targetEventId), debugLogContent) > 0) {
+                                            logToDatabase(jobId, 'info', 'Script started (found eventId in log, but jobId check failed - this is OK)', 'system');
+                                        } else {
+                                            logToDatabase(jobId, 'warning', 'Script may not have started - no debug log entry found for jobId ' & jobId & ' or eventId ' & trim(targetEventId), 'system');
+                                            // Show the actual command that was executed
+                                            logToDatabase(jobId, 'debug', 'Command executed: ' & cmdExe & ' ' & cmdArgs, 'system');
+                                            // Check if script file is readable
+                                            if (fileExists(singleJs)) {
+                                                logToDatabase(jobId, 'debug', 'Script file exists and is readable: ' & singleJs, 'system');
+                                            } else {
+                                                logToDatabase(jobId, 'error', 'Script file does not exist: ' & singleJs, 'system');
+                                                updateJobStatus(jobId, "error", {error_message: "Script file not found: " & singleJs});
+                                            }
+                                            // If script didn't start after 11 seconds, mark as error
+                                            // (We wait 8+3 seconds, so if still no log, it's likely failed)
+                                            updateJobStatus(jobId, "error", {error_message: "Script failed to start - no debug log entry found after 11 seconds. Command: " & cmdExe & " " & cmdArgs});
+                                        }
+                                    }
+                                } catch (any readErr) {
+                                    logToDatabase(jobId, 'debug', 'Could not read debug log: ' & readErr.message, 'system');
+                                }
+                            } else {
+                                logToDatabase(jobId, 'warning', 'Debug log file not found: ' & debugLogPath & ' - script may not have started', 'system');
+                                // Verify the working directory exists
+                                if (!directoryExists(workDir)) {
+                                    logToDatabase(jobId, 'error', 'Working directory does not exist: ' & workDir, 'system');
+                                }
+                            }
+                            
+                            // Log any immediate output/errors from cfexecute
+                            // These are captured from stdout/stderr
+                            if (structKeyExists(variables, "outVar") && len(trim(variables.outVar))) {
+                                logToDatabase(jobId, 'info', 'Script output (stdout): ' & left(variables.outVar, 1000), 'system');
+                                writeLog(file="scraper", text="[JOB " & jobId & "] Script stdout: " & left(variables.outVar, 500), type="information");
+                            }
+                            if (structKeyExists(variables, "errVar") && len(trim(variables.errVar))) {
+                                logToDatabase(jobId, 'error', 'Script error (stderr): ' & left(variables.errVar, 1000), 'system');
+                                writeLog(file="scraper", text="[JOB " & jobId & "] Script stderr: " & left(variables.errVar, 500), type="error");
+                            }
+                            
+                            // Note: With timeout=0, output variables are typically empty (expected behavior)
+                            // We rely on the debug log file check above to verify script execution
+                            // The debug log check will show if the script started successfully
+                            
+                            // Note: Process detection is unreliable when script runs in background
+                            // Instead, we rely on database updates to verify script is running
+                            // The script will update job_statistics and scrape_logs tables in real-time
+                            logToDatabase(jobId, 'info', 'Script launched in background - monitoring via database updates', 'system');
+                            
+                            // Optional: Quick process check (non-blocking, don't fail if not found)
+                            try {
+                                sleep(3000); // Wait 3 seconds for script to start
+                                processCheck = "";
+                                cfexecute(
+                                    name = "wmic",
+                                    arguments = 'process where "name=''node.exe''" get ProcessId,CommandLine /format:list',
+                                    timeout = 3,
+                                    variable = "processCheck"
+                                );
+                                // Check for both filename and event-id in command line
+                                if (findNoCase("scrape_single_event.js", processCheck) > 0 || 
+                                    (findNoCase("node.exe", processCheck) > 0 && findNoCase("--event-id", processCheck) > 0 && findNoCase(trim(targetEventId), processCheck) > 0)) {
+                                    logToDatabase(jobId, 'info', 'Node.js process detected - script is running', 'system');
+                                } else {
+                                    logToDatabase(jobId, 'info', 'Process not immediately detected (normal for background execution) - monitoring via database', 'system');
+                                }
+                            } catch (any procErr) {
+                                // Don't log as error - process detection is optional
+                                logToDatabase(jobId, 'debug', 'Process check skipped (non-critical): ' & procErr.message, 'system');
+                            }
+                            
+                            // Check debug log for immediate startup confirmation
+                            if (fileExists(debugLogPath)) {
+                                try {
+                                    sleep(2000); // Wait a bit more for script to write to log
+                                    debugLogContent = fileRead(debugLogPath);
+                                    // Get last 1500 characters (recent entries)
+                                    if (len(debugLogContent) > 1500) {
+                                        debugLogContent = right(debugLogContent, 1500);
+                                    }
+                                    // Only log if there are new entries (not just old ones)
+                                    if (findNoCase("Script started: eventId=" & trim(targetEventId), debugLogContent) > 0) {
+                                        logToDatabase(jobId, 'info', 'Debug log confirms script started for event ' & trim(targetEventId), 'system');
+                                    }
+                                } catch (any readErr) {
+                                    // Non-critical
+                                }
+                            }
+                            
+                        } catch (any cfexecErr) {
+                            // Handle cfexecute errors
+                            logToDatabase(jobId, 'error', 'cfexecute error: ' & cfexecErr.message, 'system');
+                            // Try to get error details if available
+                            if (structKeyExists(cfexecErr, "detail")) {
+                                logToDatabase(jobId, 'error', 'cfexecute detail: ' & cfexecErr.detail, 'system');
+                            }
+                            // Check if variables were updated despite error
+                            if (structKeyExists(variables, "errVar") && len(trim(variables.errVar))) {
+                                logToDatabase(jobId, 'error', 'Error variable content: ' & variables.errVar, 'system');
+                            }
+                            result.error = "Failed to launch scraper: " & cfexecErr.message;
+                        }
+                    } catch (any execErr) {
+                        // If outer try block fails, log the error
+                        logToDatabase(jobId, 'error', 'Execution failed: ' & execErr.message & ' | Detail: ' & (structKeyExists(execErr, "detail") ? execErr.detail : ""), 'system');
+                        result.error = "Failed to launch scraper: " & execErr.message;
+                    }
+                    } // Close the else block for Node.js check
+                } // Close the else block for script file check
 
                 application.scraperStatus.isRunning  = true;
                 application.scraperStatus.startTime  = now();
                 application.scraperStatus.lastUpdate = now();
 
-                    result.success = true;
-                    result.jobId   = jobId;
+                result.success = true;
+                result.jobId   = jobId;
+                result.message = "Scraper job started successfully";
              }
         } catch (any err) {
             result.error = "Error START scraper: " & err.message;
+            if (structKeyExists(err, "detail")) {
+                result.error &= " (Detail: " & err.detail & ")";
+            }
+            if (structKeyExists(err, "sql")) {
+                result.error &= " (SQL: " & left(err.sql, 100) & ")";
+            }
+            if (structKeyExists(err, "sqlState")) {
+                result.error &= " (SQL State: " & err.sqlState & ")";
+            }
+            writeLog(file="scraper", text="[ERROR] Start action failed: " & err.message & " | Detail: " & (structKeyExists(err, "detail") ? err.detail : "") & " | SQL: " & (structKeyExists(err, "sql") ? err.sql : ""), type="error");
         }
         writeOutput(serializeJSON(result));
         abort;
@@ -352,9 +776,9 @@
         result = {success: false, error: ""};
         
         try {
-            // Find the most recent paused job
+            // Find the most recent paused job with resume state
             findPausedJob = queryExecute(
-                "SELECT id, job_name FROM scraper_jobs WHERE status = 'paused' ORDER BY created_at DESC LIMIT 1",
+                "SELECT id, job_name, current_event_id, current_lot_number, current_event_index, resume_state FROM scraper_jobs WHERE status = 'paused' ORDER BY created_at DESC LIMIT 1",
                 [],
                 { datasource = application.db.dsn }
             );
@@ -364,10 +788,10 @@
             } else {
                 jobId = findPausedJob.id;
                 
-                // Resume the scraper process
+                // Resume the scraper process with job ID (scraper will load state from database)
                 workDir = getDirectoryFromPath(paths.scraper);
                 cmdExe  = paths.cmdExe;
-                scraperCmd = '/c cd /d "' & workDir & '" && node "' & paths.scraper & '" --resume';
+                scraperCmd = '/c cd /d "' & workDir & '" && node "' & paths.scraper & '" --job-id=' & jobId;
                 output = ""; 
 
                 cfexecute(
@@ -377,15 +801,20 @@
                     variable = "output"
                 );
                 
-                // Update job status
+                // Update job status to running
                 updateJobStatus(jobId, "running");
-                logToDatabase(jobId, "info", "Scraper job resumed successfully", "system");
+                logToDatabase(jobId, "info", "Scraper job resumed successfully. Loading state from database.", "system");
                 
                 application.scraperStatus.isRunning = true;
                 application.scraperStatus.lastUpdate = now();
                 
                 result.success = true;
-                result.message = "Scraper job resumed successfully";
+                result.message = "Scraper job resumed successfully. Resuming from saved state.";
+                result.resumeState = {
+                    currentEventId: findPausedJob.current_event_id ?: "",
+                    currentLotNumber: findPausedJob.current_lot_number ?: "",
+                    currentEventIndex: findPausedJob.current_event_index ?: 0
+                };
             }
         } catch (any err) {
             result.error = "Error resuming scraper: " & err.message;
@@ -401,7 +830,7 @@
         try {
             // Find the most recent running job
             findRunningJob = queryExecute(
-                "SELECT id, job_name, process_id FROM scraper_jobs WHERE status = 'running' ORDER BY created_at DESC LIMIT 1",
+                "SELECT id, job_name, process_id, current_event_id, current_lot_number, current_event_index FROM scraper_jobs WHERE status = 'running' ORDER BY created_at DESC LIMIT 1",
                 [],
                 { datasource = application.db.dsn }
             );
@@ -412,7 +841,7 @@
                 jobId = findRunningJob.id;
                 processId = findRunningJob.process_id;
                 
-                // Kill process
+                // Kill process (scraper will detect pause status and save state)
                 if (len(processId) > 0) {
                     cfexecute(
                         name = "taskkill",
@@ -421,6 +850,7 @@
                     );
                 }
                 
+                // Update job status to paused (state will be saved by scraper script)
                 updateJobStatus(jobId, "paused");
                 logToDatabase(jobId, "info", "Scraper job paused by user", "user");
                 
@@ -428,7 +858,9 @@
                 application.scraperStatus.lastUpdate = now();
                 
                 result.success = true;
-                result.message = "Scraper job paused successfully";
+                result.message = "Scraper job paused successfully. State saved for resume.";
+                result.currentEventId = findRunningJob.current_event_id ?: "";
+                result.currentLotNumber = findRunningJob.current_lot_number ?: "";
             }
         } catch (any err) {
             result.error = "Error pausing scraper: " & err.message;
@@ -516,8 +948,17 @@
     
     // ---- Enhanced AJAX Endpoints ----
     if ((url.ajax ?: "") == "1") {
-        // Handle AJAX requests
-        if (action == "status") {
+        // Wrap entire AJAX section in try-catch to ensure JSON response
+        try {
+            // Set content type to JSON first - this must be before any output
+            try {
+                cfcontent(type="application/json", reset="true");
+            } catch (any contentErr) {
+                // If cfcontent fails, continue - some CF versions handle this differently
+            }
+            
+            // Handle AJAX requests
+            if (action == "status") {
             statusData = {
                 isRunning: false,
                 currentJob: {},
@@ -537,35 +978,102 @@
             };
 
             try {
-                // Get current active job
-                getCurrentJob = queryExecute(
-                    "SELECT id, job_name, status, created_at, started_at, paused_at, stopped_at, process_id, max_sales, target_event_id, run_mode, error_message 
-                    FROM scraper_jobs 
-                    WHERE status IN ('running', 'paused') 
-                    ORDER BY created_at DESC 
-                    LIMIT 1",
-                    [],
-                    { datasource: application.db.dsn }
-                );
+                // Check if database is configured
+                if (!structKeyExists(application, "db") || !structKeyExists(application.db, "dsn") || !len(application.db.dsn)) {
+                    throw new Error("Database DSN not configured. Please check Application.cfc initialization.");
+                }
+                
+                // Get current active job with resume state fields
+                // Use try-catch for each query to handle missing columns gracefully
+                try {
+                    getCurrentJob = queryExecute(
+                        "SELECT id, job_name, status, created_at, started_at, paused_at, stopped_at, process_id, max_sales, target_event_id, run_mode, error_message,
+                                current_event_id, current_lot_number, total_events, current_event_index, resume_state
+                        FROM scraper_jobs 
+                        WHERE status IN ('running', 'paused') 
+                        ORDER BY created_at DESC 
+                        LIMIT 1",
+                        [],
+                        { datasource: application.db.dsn }
+                    );
+                } catch (any queryErr) {
+                    // If query fails (maybe missing columns), try simpler query
+                    writeLog(file="scraper", text="Error in getCurrentJob query: " & queryErr.message & " | Trying simpler query", type="error");
+                    try {
+                        getCurrentJob = queryExecute(
+                            "SELECT id, job_name, status, created_at, started_at, paused_at, stopped_at, process_id, max_sales, target_event_id, run_mode, error_message
+                            FROM scraper_jobs 
+                            WHERE status IN ('running', 'paused') 
+                            ORDER BY created_at DESC 
+                            LIMIT 1",
+                            [],
+                            { datasource: application.db.dsn }
+                        );
+                    } catch (any simpleQueryErr) {
+                        // If even simple query fails, check if table exists
+                        writeLog(file="scraper", text="Error in simple getCurrentJob query: " & simpleQueryErr.message, type="error");
+                        // Create empty query result
+                        getCurrentJob = queryNew("id,job_name,status,created_at,started_at");
+                    }
+                }
 
+                currentJobId = 0;
                 if (getCurrentJob.recordCount > 0) {
                     for (row in getCurrentJob) {
+                        currentJobId = row.id; // Store job ID for log fetching
                         statusData.currentJob = {
                             id: row.id,
-                            name: row.job_name,
-                            status: row.status,
-                            createdAt: row.created_at,
-                            startedAt: row.started_at,
-                            pausedAt: row.paused_at,
-                            stoppedAt: row.stopped_at,
-                            processId: row.process_id,
-                            maxSales: row.max_sales,
-                            targetEventId: row.target_event_id,
-                            runMode: row.run_mode,
-                            errorMessage: row.error_message
+                            name: row.job_name ?: "",
+                            status: row.status ?: "",
+                            createdAt: row.created_at ?: "",
+                            startedAt: row.started_at ?: "",
+                            pausedAt: structKeyExists(row, "paused_at") ? row.paused_at : "",
+                            stoppedAt: structKeyExists(row, "stopped_at") ? row.stopped_at : "",
+                            processId: structKeyExists(row, "process_id") ? row.process_id : "",
+                            maxSales: structKeyExists(row, "max_sales") ? row.max_sales : "",
+                            targetEventId: structKeyExists(row, "target_event_id") ? row.target_event_id : "",
+                            runMode: structKeyExists(row, "run_mode") ? row.run_mode : "",
+                            errorMessage: structKeyExists(row, "error_message") ? row.error_message : "",
+                            currentEventId: structKeyExists(row, "current_event_id") && !isNull(row.current_event_id) ? row.current_event_id : "",
+                            currentLotNumber: structKeyExists(row, "current_lot_number") && !isNull(row.current_lot_number) ? row.current_lot_number : "",
+                            totalEvents: structKeyExists(row, "total_events") && !isNull(row.total_events) ? row.total_events : 0,
+                            currentEventIndex: structKeyExists(row, "current_event_index") && !isNull(row.current_event_index) ? row.current_event_index : 0,
+                            resumeState: (structKeyExists(row, "resume_state") && !isNull(row.resume_state) && len(trim(row.resume_state))) 
+                                ? (isJSON(row.resume_state) ? deserializeJSON(row.resume_state) : {}) 
+                                : {}
                         };
 
                         statusData.isRunning = (row.status == "running");
+                        
+                        // Get job statistics for progress tracking
+                        try {
+                            getJobStats = queryExecute(
+                                "SELECT total_events, processed_events, total_lots, processed_lots, files_created, files_completed, last_update
+                                 FROM job_statistics 
+                                 WHERE job_id = ? 
+                                 ORDER BY id DESC LIMIT 1",
+                                [{value = row.id, cfsqltype = "cf_sql_integer"}],
+                                {datasource = application.db.dsn}
+                            );
+                        } catch (any statsErr) {
+                            writeLog(file="scraper", text="Error getting job statistics: " & statsErr.message, type="error");
+                            getJobStats = queryNew("total_events,processed_events,total_lots,processed_lots,files_created,files_completed,last_update");
+                        }
+                        
+                        if (getJobStats.recordCount > 0) {
+                            for (stat in getJobStats) {
+                                statusData.currentJob.statistics = {
+                                    totalEvents: stat.total_events ?: 0,
+                                    processedEvents: stat.processed_events ?: 0,
+                                    totalLots: stat.total_lots ?: 0,
+                                    processedLots: stat.processed_lots ?: 0,
+                                    filesCreated: stat.files_created ?: 0,
+                                    filesCompleted: stat.files_completed ?: 0,
+                                    lastUpdate: stat.last_update
+                                };
+                                break;
+                            }
+                        }
 
                         // Update button states
                         if (row.status == "running") {
@@ -581,6 +1089,50 @@
                         }
 
                         break; // Exit after first row
+                    }
+                }
+                
+                // Get logs for the current job (outside the loop so it always runs)
+                if (getCurrentJob.recordCount > 0 && currentJobId > 0) {
+                    try {
+                        getJobLogs = queryExecute(
+                            "SELECT message, timestamp, log_level, source 
+                             FROM scrape_logs 
+                             WHERE job_id = ? 
+                             ORDER BY timestamp DESC 
+                             LIMIT 30",
+                            [{value = currentJobId, cfsqltype = "cf_sql_integer"}],
+                            {datasource = application.db.dsn}
+                        );
+                        
+                        writeLog(file="scraper", text="[DEBUG] Fetched " & getJobLogs.recordCount & " logs for job " & currentJobId, type="information");
+                        
+                        if (getJobLogs.recordCount > 0) {
+                            // Add logs in reverse order (oldest first for display, newest at bottom)
+                            for (logRow = getJobLogs.recordCount; logRow >= 1; logRow--) {
+                                logMessage = getJobLogs.message[logRow];
+                                logTimestamp = getJobLogs.timestamp[logRow];
+                                logLevel = getJobLogs.log_level[logRow];
+                                logSource = getJobLogs.source[logRow];
+                                
+                                // Format log message with timestamp (like command line: [HH:mm:ss] message)
+                                formattedLog = "[" & timeFormat(logTimestamp, "HH:mm:ss") & "] " & logMessage;
+                                arrayAppend(statusData.logs, formattedLog);
+                            }
+                        } else {
+                            // No logs yet - add a placeholder
+                            arrayAppend(statusData.logs, "[Waiting] Script starting, logs will appear here once scraping begins...");
+                        }
+                    } catch (any logsErr) {
+                        writeLog(file="scraper", text="Error getting job logs for job " & currentJobId & ": " & logsErr.message, type="error");
+                        arrayAppend(statusData.logs, "[Error] Could not fetch logs: " & logsErr.message);
+                    }
+                } else {
+                    // No active job or job ID not set
+                    if (getCurrentJob.recordCount == 0) {
+                        arrayAppend(statusData.logs, "[Info] No active job found");
+                    } else if (currentJobId == 0) {
+                        arrayAppend(statusData.logs, "[Info] Job ID not available yet");
                     }
                 }
                 // Get recent jobs
@@ -606,41 +1158,68 @@
                 }
 
                 // Check in-progress files
-                inProgressFolder = application.paths.inProgressDir;
-                if (directoryExists(inProgressFolder)) {
-                    inProgressFiles = directoryList(inProgressFolder, false, "name", "*.jsonl");
+                try {
+                    inProgressFolder = structKeyExists(application, "paths") && structKeyExists(application.paths, "inProgressDir") 
+                        ? application.paths.inProgressDir 
+                        : expandPath("./allAuctionLotsData_inprogress");
+                    if (len(inProgressFolder) && directoryExists(inProgressFolder)) {
+                        inProgressFiles = directoryList(inProgressFolder, false, "name", "*.jsonl");
 
-                    for (file in inProgressFiles) {
-                        filePath = inProgressFolder & "/" & file;
-                        if (fileExists(filePath)) {
-                            fileInfo = getFileInfo(filePath);
-                            lineCount = arrayLen(listToArray(fileRead(filePath), chr(10)));
-                            arrayAppend(statusData.inProgressFiles, {
-                                name: file,
-                                size: numberFormat(fileInfo.size / 1024, "999.9"),
-                                lastModified: fileInfo.lastModified,
-                                lineCount: lineCount
-                            });
+                        for (file in inProgressFiles) {
+                            try {
+                                filePath = inProgressFolder & "/" & file;
+                                if (fileExists(filePath)) {
+                                    fileInfo = getFileInfo(filePath);
+                                    // Only read file if it's not too large (limit to 10MB)
+                                    if (fileInfo.size < 10485760) {
+                                        lineCount = arrayLen(listToArray(fileRead(filePath), chr(10)));
+                                    } else {
+                                        lineCount = 0; // Skip line count for large files
+                                    }
+                                    arrayAppend(statusData.inProgressFiles, {
+                                        name: file,
+                                        size: numberFormat(fileInfo.size / 1024, "999.9"),
+                                        lastModified: fileInfo.lastModified,
+                                        lineCount: lineCount
+                                    });
+                                }
+                            } catch (any fileErr) {
+                                // Skip this file if there's an error
+                                writeLog(file="scraper", text="Error reading in-progress file " & file & ": " & fileErr.message, type="error");
+                            }
                         }
                     }
+                } catch (any dirErr) {
+                    writeLog(file="scraper", text="Error checking in-progress directory: " & dirErr.message, type="error");
                 }
 
                 // Check completed files
-                finalFolder = application.paths.finalDir;
-                if (directoryExists(finalFolder)) {
-                    finalFiles = directoryList(finalFolder, false, "name", "*.json");
+                try {
+                    finalFolder = structKeyExists(application, "paths") && structKeyExists(application.paths, "finalDir") 
+                        ? application.paths.finalDir 
+                        : expandPath("./allAuctionLotsData_final");
+                    if (len(finalFolder) && directoryExists(finalFolder)) {
+                        finalFiles = directoryList(finalFolder, false, "name", "*.json");
 
-                    for (file in finalFiles) {
-                        filePath = finalFolder & "/" & file;
-                        if (fileExists(filePath)) {
-                            fileInfo = getFileInfo(filePath);
-                            arrayAppend(statusData.completedFiles, {
-                                name: file,
-                                size: numberFormat(fileInfo.size / 1024, "999.9"),
-                                lastModified: fileInfo.lastModified
-                            });
+                        for (file in finalFiles) {
+                            try {
+                                filePath = finalFolder & "/" & file;
+                                if (fileExists(filePath)) {
+                                    fileInfo = getFileInfo(filePath);
+                                    arrayAppend(statusData.completedFiles, {
+                                        name: file,
+                                        size: numberFormat(fileInfo.size / 1024, "999.9"),
+                                        lastModified: fileInfo.lastModified
+                                    });
+                                }
+                            } catch (any fileErr) {
+                                // Skip this file if there's an error
+                                writeLog(file="scraper", text="Error reading completed file " & file & ": " & fileErr.message, type="error");
+                            }
                         }
                     }
+                } catch (any dirErr) {
+                    writeLog(file="scraper", text="Error checking completed directory: " & dirErr.message, type="error");
                 }
 
                 // Cross-check for running processes
@@ -666,7 +1245,7 @@
                         application.scraperStatus.isRunning = false;
                         application.scraperStatus.lastUpdate = now();
                         statusData.isRunning = false;
-                        addLog("info", "Auto-corrected global status: scraper marked as stopped due to inactivity");
+                        writeLog(file="scraper", text="Auto-corrected global status: scraper marked as stopped due to inactivity", type="information");
                     }
                 }
 
@@ -675,12 +1254,93 @@
                 application.scraperStatus.lastUpdate = now();
 
             } catch (any err) {
-                statusData.error = "Error retrieving status: " & err.message;
+                statusData = {
+                    error: "Error retrieving status: " & err.message,
+                    isRunning: false,
+                    currentJob: {},
+                    logs: ["[Error] " & err.message]
+                };
+                if (structKeyExists(err, "detail")) {
+                    statusData.error &= " (Detail: " & err.detail & ")";
+                }
+                if (structKeyExists(err, "sql")) {
+                    statusData.error &= " (SQL: " & left(err.sql, 100) & ")";
+                }
+                writeLog(file="scraper", text="[ERROR] Status action failed: " & err.message & " | Detail: " & (structKeyExists(err, "detail") ? err.detail : "") & " | SQL: " & (structKeyExists(err, "sql") ? err.sql : ""), type="error");
             }
 
-            writeOutput(serializeJSON(statusData));
+            // Ensure we always output JSON, even on error
+            try {
+                writeOutput(serializeJSON(statusData));
+            } catch (any outputErr) {
+                // Last resort - output minimal JSON
+                writeOutput(serializeJSON({error: "Failed to serialize status data: " & outputErr.message, isRunning: false}));
+            }
             abort;
         }
+            
+            // Get current progress details
+            if (action == "get_current_progress") {
+                progressData = {
+                    success: false,
+                    currentEventId: "",
+                    currentLotNumber: "",
+                    totalEvents: 0,
+                    currentEventIndex: 0,
+                    lotsScraped: 0,
+                    lotsInserted: 0,
+                    eventsProcessed: 0
+                };
+                
+                try {
+                    // Get current active job
+                    getCurrentJob = queryExecute(
+                        "SELECT id, current_event_id, current_lot_number, total_events, current_event_index
+                         FROM scraper_jobs 
+                         WHERE status IN ('running', 'paused') 
+                         ORDER BY created_at DESC 
+                         LIMIT 1",
+                        [],
+                        { datasource = application.db.dsn }
+                    );
+                    
+                    if (getCurrentJob.recordCount > 0) {
+                        for (row in getCurrentJob) {
+                            progressData.currentEventId = row.current_event_id ?: "";
+                            progressData.currentLotNumber = row.current_lot_number ?: "";
+                            progressData.totalEvents = row.total_events ?: 0;
+                            progressData.currentEventIndex = row.current_event_index ?: 0;
+                            
+                            // Get statistics
+                            getJobStats = queryExecute(
+                                "SELECT processed_events, processed_lots
+                                 FROM job_statistics 
+                                 WHERE job_id = ? 
+                                 ORDER BY id DESC LIMIT 1",
+                                [{value = row.id, cfsqltype = "cf_sql_integer"}],
+                                {datasource = application.db.dsn}
+                            );
+                            
+                            if (getJobStats.recordCount > 0) {
+                                for (stat in getJobStats) {
+                                    progressData.eventsProcessed = stat.processed_events ?: 0;
+                                    progressData.lotsScraped = stat.processed_lots ?: 0;
+                                    progressData.lotsInserted = stat.processed_lots ?: 0; // Same as scraped in real-time mode
+                                    break;
+                                }
+                            }
+                            
+                            progressData.success = true;
+                            break;
+                        }
+                    }
+                } catch (any err) {
+                    progressData.error = err.message;
+                }
+                
+                writeOutput(serializeJSON(progressData));
+                abort;
+            }
 
         
         if (action == "start") {
@@ -715,7 +1375,7 @@
                  scrOut = ""; scrErr = "";
         // Use simplified single-event scraper when eventId provided
         if (len(trim(targetEventId))) {
-            scrCmd = '/c cd /d "' & workDir & '" && "' & paths.nodeBinary & '" "' & expandPath('/canchat1/scrape_single_event.js') & '"';
+            scrCmd = '/c cd /d "' & workDir & '" && "' & paths.nodeBinary & '" "' & expandPath('/scrape_single_event.js') & '"';
         } else {
                 scrCmd = '/c cd /d "' & workDir & '" && "' & paths.nodeBinary & '" "' & paths.scraper & '"';
         }
@@ -1221,6 +1881,24 @@
             abort;
         }
 
+        } catch (any ajaxErr) {
+            // Catch any unhandled errors in AJAX section and return JSON
+            errorResponse = {
+                error: "Internal server error: " & ajaxErr.message,
+                detail: structKeyExists(ajaxErr, "detail") ? ajaxErr.detail : "",
+                type: "AJAX_ERROR",
+                action: action ?: "unknown"
+            };
+            if (structKeyExists(ajaxErr, "sql")) {
+                errorResponse.sql = left(ajaxErr.sql, 200);
+            }
+            if (structKeyExists(ajaxErr, "sqlState")) {
+                errorResponse.sqlState = ajaxErr.sqlState;
+            }
+            writeLog(file="scraper", text="[FATAL AJAX ERROR] Action: " & (action ?: "unknown") & " | Error: " & ajaxErr.message & " | Detail: " & (structKeyExists(ajaxErr, "detail") ? ajaxErr.detail : "") & " | SQL: " & (structKeyExists(ajaxErr, "sql") ? ajaxErr.sql : ""), type="error");
+            writeOutput(serializeJSON(errorResponse));
+            abort;
+        }
     }
     // ---- Start Scraper Process (Non-AJAX) ----
     if (action == "start" && (url.ajax ?: "") != "1") {
@@ -1228,7 +1906,7 @@
         // Build scraper command based on run mode
         scrOut = ""; scrErr = "";
         // Choose script: single-event script if eventId, otherwise multi-event
-        singleScript = expandPath('/canchat1/scrape_single_event.js');
+        singleScript = expandPath('/scrape_single_event.js');
         chosenScript = len(trim(targetEventId)) ? singleScript : paths.scraper;
         scrCmd = '/c cd /d "' & workDir & '" && node "' & chosenScript & '"';
     

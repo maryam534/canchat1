@@ -270,6 +270,146 @@ async function upsertLotTx(client, lot, jsonData, firmPk, salePk) {
   return r.rows[0].lot_pk;
 }
 
+// -------- Real-time single-lot insertion (for scraper integration) --------
+/**
+ * Insert a single lot to database in real-time mode
+ * This function handles auction house, sale, and lot insertion for a single lot
+ * @param {Object} lot - Lot data object
+ * @param {Object} eventData - Event data containing auctionid, auctionname, auctiontitle, eventdate, contact, saleInfo, extractedSaleName
+ * @returns {Promise<Object>} - { success: boolean, lotPk: number|null, error: string|null }
+ */
+async function insertSingleLot(lot, eventData) {
+  const client = await pool.connect();
+  let lotPk = null;
+  
+  try {
+    await client.query('BEGIN');
+    
+    const auctionId = eventData.auctionid || '';
+    if (!auctionId) {
+      throw new Error('Missing auctionid in eventData');
+    }
+    
+    // 1) Upsert Auction House
+    await upsertAuctionHouseFromJsonTx(client, eventData);
+    
+    // 2) Get firm_pk
+    const firmPk = await getFirmPkTx(client, auctionId);
+    if (!firmPk) {
+      throw new Error(`firm_pk not found for firmId ${auctionId}`);
+    }
+    
+    // 3) Upsert Sale
+    const { salePk } = await upsertSaleTx(client, eventData, firmPk);
+    
+    // 4) Insert Lot
+    lotPk = await upsertLotTx(client, lot, eventData, firmPk, salePk);
+    
+    // 5) Insert category if present
+    if (lot.category) {
+      await client.query(
+        `INSERT INTO categories (name) VALUES ($1)
+         ON CONFLICT (name) DO NOTHING`,
+        [lot.category.trim()]
+      );
+    }
+    
+    await client.query('COMMIT');
+    
+    return { success: true, lotPk, error: null };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(`[insertSingleLot Error] ${err.message}`);
+    return { success: false, lotPk: null, error: err.message };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Process lot with embedding in real-time mode
+ * This is a wrapper that inserts the lot and optionally creates embedding
+ * @param {Object} lot - Lot data object
+ * @param {Object} eventData - Event data
+ * @param {boolean} createEmbedding - Whether to create embedding (default: true)
+ * @returns {Promise<Object>} - Insertion result
+ */
+async function processLotInRealTime(lot, eventData, createEmbedding = true) {
+  const result = await insertSingleLot(lot, eventData);
+  
+  if (result.success && createEmbedding && result.lotPk) {
+    try {
+      // Create embedding for the lot
+      const saleName = eventData.auctiontitle || '';
+      const chunk = buildLotChunk(lot, saleName);
+      const embedding = await getEmbedding(chunk);
+      const vecLiteral = `[${embedding.join(',')}]`;
+      
+      await pool.query(
+        `INSERT INTO chunks (
+          chunk_text, 
+          embedding, 
+          source_type, 
+          source_name, 
+          source_id,
+          chunk_index,
+          chunk_size,
+          content_type,
+          title,
+          category,
+          embedding_model,
+          metadata
+        )
+        VALUES ($1, $2::vector, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+        ON CONFLICT (source_type, source_id, chunk_index) DO UPDATE
+        SET chunk_text = EXCLUDED.chunk_text,
+            embedding = EXCLUDED.embedding,
+            title = EXCLUDED.title,
+            category = EXCLUDED.category,
+            metadata = EXCLUDED.metadata`,
+        [
+          chunk, 
+          vecLiteral, 
+          'lot', 
+          saleName, 
+          String(result.lotPk),
+          1,
+          chunk.length,
+          'auction/lot',
+          lot.lotname || '',
+          lot.category || '',
+          'text-embedding-3-small',
+          JSON.stringify({
+            lotNumber: lot.lotnumber || null,
+            startingPrice: lot.startingprice || null,
+            realizedPrice: lot.realizedprice || null,
+            lotUrl: lot.loturl || null,
+            imageUrl: lot.imagepath || null,
+            saleId: eventData.salePk || null
+          })
+        ]
+      );
+    } catch (embedErr) {
+      console.warn(`[Embedding Error for lot ${lot.lotnumber}]: ${embedErr.message}`);
+      // Don't fail the insertion if embedding fails
+    }
+  }
+  
+  return result;
+}
+
+// Export functions for use in scraper
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    insertSingleLot,
+    processLotInRealTime,
+    upsertLotTx,
+    upsertSaleTx,
+    upsertAuctionHouseFromJsonTx,
+    getFirmPkTx
+  };
+}
+
 // -------- Embedding resume helper --------
 async function getExistingEmbeddedLotFks(lotPkList) {
   if (!lotPkList.length) return new Set();
@@ -528,11 +668,15 @@ async function processFiles() {
   }
 }
 
-// Start
-processFiles().then(() => {
-  console.log('✅ Script finished successfully');
-  process.exit(0);
-}).catch(err => {
-  console.error('❌ Script failed:', err);
-  process.exit(1);
-});
+// Only run processFiles() if this script is executed directly (not when required as a module)
+// Check if this is the main module (not required by another script)
+if (require.main === module) {
+  // Start
+  processFiles().then(() => {
+    console.log('✅ Script finished successfully');
+    process.exit(0);
+  }).catch(err => {
+    console.error('❌ Script failed:', err);
+    process.exit(1);
+  });
+}

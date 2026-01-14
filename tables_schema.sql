@@ -182,7 +182,13 @@ CREATE TABLE IF NOT EXISTS scraper_jobs (
     parameters JSONB NULL,
     error_message TEXT NULL,
     created_by VARCHAR(100) DEFAULT 'system',
-    rag_processed_at TIMESTAMP NULL -- Track when RAG processing completed
+    rag_processed_at TIMESTAMP NULL, -- Track when RAG processing completed
+    -- Resume state tracking columns
+    resume_state JSONB NULL, -- Store current event ID, lot number, file paths
+    current_event_id VARCHAR(50) NULL, -- Currently processing event ID
+    current_lot_number VARCHAR(50) NULL, -- Last processed lot number
+    total_events INTEGER NULL, -- Total events to process
+    current_event_index INTEGER NULL -- Current event position (0-based)
 );
 
 -- Table for detailed scraping logs

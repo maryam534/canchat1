@@ -2,6 +2,13 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const pool = require('./dbConfig');
+// Import real-time insertion functions
+let insertLotFunctions = null;
+try {
+  insertLotFunctions = require('./insert_lots_into_db');
+} catch (err) {
+  console.warn('[Warning] Could not load insert_lots_into_db module. Real-time insertion disabled.');
+}
 
 // Enhanced logging function
 function log(message, type = 'info') {
@@ -145,6 +152,110 @@ async function updateJobStatistics(jobId, stats) {
         }
     } catch (err) {
         console.error(`[DB Stats Error] ${err.message}`);
+    }
+}
+
+// -------- Pause/Resume State Management --------
+/**
+ * Check if job is paused
+ * @param {number} jobId - Job ID
+ * @returns {Promise<boolean>} - True if job is paused
+ */
+async function checkPauseStatus(jobId) {
+    if (!jobId) return false;
+    try {
+        const result = await pool.query(
+            `SELECT status FROM scraper_jobs WHERE id = $1`,
+            [jobId]
+        );
+        return result.rows.length > 0 && result.rows[0].status === 'paused';
+    } catch (err) {
+        console.error(`[Pause Check Error] ${err.message}`);
+        return false;
+    }
+}
+
+/**
+ * Save resume state to database
+ * @param {number} jobId - Job ID
+ * @param {string} eventId - Current event ID
+ * @param {string} lotNumber - Last processed lot number
+ * @param {number} eventIndex - Current event index (0-based)
+ * @param {Object} additionalState - Additional state to save
+ */
+async function saveResumeState(jobId, eventId, lotNumber, eventIndex, additionalState = {}) {
+    if (!jobId) return;
+    try {
+        const resumeState = {
+            eventId,
+            lotNumber,
+            eventIndex,
+            timestamp: new Date().toISOString(),
+            ...additionalState
+        };
+        
+        await pool.query(
+            `UPDATE scraper_jobs 
+             SET resume_state = $1::jsonb,
+                 current_event_id = $2,
+                 current_lot_number = $3,
+                 current_event_index = $4
+             WHERE id = $5`,
+            [JSON.stringify(resumeState), eventId, lotNumber, eventIndex, jobId]
+        );
+    } catch (err) {
+        console.error(`[Save Resume State Error] ${err.message}`);
+    }
+}
+
+/**
+ * Get resume state from database
+ * @param {number} jobId - Job ID
+ * @returns {Promise<Object|null>} - Resume state object or null
+ */
+async function getResumeState(jobId) {
+    if (!jobId) return null;
+    try {
+        const result = await pool.query(
+            `SELECT resume_state, current_event_id, current_lot_number, current_event_index, total_events
+             FROM scraper_jobs WHERE id = $1`,
+            [jobId]
+        );
+        
+        if (result.rows.length > 0) {
+            const row = result.rows[0];
+            return {
+                resumeState: row.resume_state ? (typeof row.resume_state === 'string' ? JSON.parse(row.resume_state) : row.resume_state) : null,
+                currentEventId: row.current_event_id,
+                currentLotNumber: row.current_lot_number,
+                currentEventIndex: row.current_event_index,
+                totalEvents: row.total_events
+            };
+        }
+        return null;
+    } catch (err) {
+        console.error(`[Get Resume State Error] ${err.message}`);
+        return null;
+    }
+}
+
+/**
+ * Update current event ID in job
+ * @param {number} jobId - Job ID
+ * @param {string} eventId - Current event ID
+ * @param {number} eventIndex - Current event index
+ */
+async function updateCurrentEvent(jobId, eventId, eventIndex) {
+    if (!jobId) return;
+    try {
+        await pool.query(
+            `UPDATE scraper_jobs 
+             SET current_event_id = $1, current_event_index = $2
+             WHERE id = $3`,
+            [eventId, eventIndex, jobId]
+        );
+    } catch (err) {
+        console.error(`[Update Current Event Error] ${err.message}`);
     }
 }
 
@@ -450,7 +561,17 @@ if (!fs.existsSync(finalFolder)) {
         fs.writeFileSync(eventIdsFile, JSON.stringify(newEventObjects, null, 2));
         console.log(`\n✅ Total new event IDs saved: ${newEventObjects.length}\n`);
 
-        for (const { eventId: auctionId, contact, saleInfo,extractedSaleName, eventName: auctionName } of newEventObjects){
+        // Get total events count for progress tracking
+        const totalEventsCount = newEventObjects.length;
+        if (jobId) {
+            await pool.query(
+                `UPDATE scraper_jobs SET total_events = $1 WHERE id = $2`,
+                [totalEventsCount, jobId]
+            );
+        }
+
+        for (let eventIndex = 0; eventIndex < newEventObjects.length; eventIndex++) {
+            const { eventId: auctionId, contact, saleInfo, extractedSaleName, eventName: auctionName } = newEventObjects[eventIndex];
 
             const inProgressFile = path.join(inProgressFolder, `auction_${auctionId}_lots.jsonl`);
             const finalFile = path.join(finalFolder, `auction_${auctionId}_lots.json`);
@@ -461,12 +582,14 @@ if (!fs.existsSync(finalFolder)) {
                 jobStats.processedEvents++;
                 jobStats.filesCompleted++;
                 await updateJobStatistics(jobId, jobStats);
+                await updateCurrentEvent(jobId, auctionId, eventIndex);
             }
             continue;
             }
 
-            // Update statistics for new event
+            // Update current event ID
             if (jobId) {
+                await updateCurrentEvent(jobId, auctionId, eventIndex);
                 jobStats.filesCreated++;
                 await updateJobStatistics(jobId, jobStats);
                 await logToDatabase(jobId, 'info', `Processing auction ${auctionId}: ${auctionName}`, 'scraper', { auctionId, auctionName });
@@ -521,6 +644,22 @@ if (!fs.existsSync(finalFolder)) {
                     const lotElements = await page.$$('.browse');
                     for (const lot of lotElements) {
                         const lotNumber = await lot.$eval('.lot a', el => el.textContent.trim().replace('Lot ', ''));
+                        
+                        // Check pause status before processing each lot
+                        if (jobId && await checkPauseStatus(jobId)) {
+                            log(`Job paused. Saving state at event ${auctionId}, lot ${lotNumber}`, 'warning');
+                            await saveResumeState(jobId, auctionId, lotNumber, eventIndex, {
+                                inProgressFile,
+                                finalFile
+                            });
+                            await logToDatabase(jobId, 'info', `Job paused at event ${auctionId}, lot ${lotNumber}`, 'system');
+                            // Wait in loop until resumed
+                            while (await checkPauseStatus(jobId)) {
+                                await new Promise(resolve => setTimeout(resolve, 2000)); // Check every 2 seconds
+                            }
+                            log(`Job resumed. Continuing from event ${auctionId}, lot ${lotNumber}`, 'info');
+                            await logToDatabase(jobId, 'info', `Job resumed at event ${auctionId}, lot ${lotNumber}`, 'system');
+                        }
                         if (scrapedLotNumbers.has(lotNumber)) {
                             console.log(`  ↪️ Already scraped lot ${lotNumber}, skipping.`);
                             continue;
@@ -579,16 +718,88 @@ if (!fs.existsSync(finalFolder)) {
                             allLots.push(lotData);
                             scrapedLotNumbers.add(lotNumber);
 
-                            // Update statistics every 10 lots
-                            if (jobId && allLots.length % 10 === 0) {
+                            // Real-time insertion: Insert lot immediately to database
+                            if (insertLotFunctions && jobId) {
+                                try {
+                                    const eventData = {
+                                        auctionid: auctionId,
+                                        auctionname: auctionName,
+                                        auctiontitle: auctionTitle,
+                                        eventdate: eventDate,
+                                        contact,
+                                        saleInfo,
+                                        extractedSaleName
+                                    };
+                                    
+                                    const insertResult = await insertLotFunctions.processLotInRealTime(lotData, eventData, true);
+                                    if (insertResult.success) {
+                                        jobStats.processedLots++;
+                                        console.log(`✅ Inserted lot ${lotNumber} to database (lot_pk: ${insertResult.lotPk})`);
+                                    } else {
+                                        console.warn(`⚠️ Failed to insert lot ${lotNumber}: ${insertResult.error}`);
+                                        await logToDatabase(jobId, 'warning', `Failed to insert lot ${lotNumber}: ${insertResult.error}`, 'scraper', { lotNumber, error: insertResult.error });
+                                    }
+                                } catch (insertErr) {
+                                    console.warn(`⚠️ Error inserting lot ${lotNumber}: ${insertErr.message}`);
+                                    await logToDatabase(jobId, 'warning', `Error inserting lot ${lotNumber}: ${insertErr.message}`, 'scraper', { lotNumber, error: insertErr.message });
+                                }
+                            }
+
+                            // Save resume state and update statistics after each lot (real-time)
+                            if (jobId) {
+                                // Update current lot number in job
+                                await pool.query(
+                                    `UPDATE scraper_jobs 
+                                     SET current_lot_number = $1, current_event_id = $2
+                                     WHERE id = $3`,
+                                    [lotNumber, auctionId, jobId]
+                                );
+                                
+                                // Update statistics after each lot for real-time monitoring
                                 jobStats.processedLots = allLots.length;
                                 await updateJobStatistics(jobId, jobStats);
+                                
+                                // Save resume state
+                                await saveResumeState(jobId, auctionId, lotNumber, eventIndex, {
+                                    inProgressFile,
+                                    finalFile,
+                                    lotsScraped: allLots.length
+                                });
+                                
+                                // Log every 5 lots for activity feed
+                                if (allLots.length % 5 === 0) {
+                                    await logToDatabase(jobId, 'info', `Scraped ${allLots.length} lots from event ${auctionId}`, 'scraper', { 
+                                        eventId: auctionId, 
+                                        lotsScraped: allLots.length,
+                                        currentLot: lotNumber 
+                                    });
+                                }
                             }
 
                             console.log(`✅ Scraped lot ${lotNumber} - ${prettyLotUrl}`);
                         } catch (err) {
                             allLotsScrapedSuccessfully = false; // ❗ Mark failure
                             console.warn(`❌ Error scraping lot: ${err.message}`);
+                            
+                            // On error, pause job and save state for resume
+                            if (jobId) {
+                                try {
+                                    await updateJobStatus(jobId, 'paused');
+                                    await saveResumeState(jobId, auctionId, lotNumber, eventIndex, {
+                                        inProgressFile,
+                                        finalFile,
+                                        error: err.message,
+                                        errorStack: err.stack
+                                    });
+                                    await logToDatabase(jobId, 'error', `Error scraping lot ${lotNumber}: ${err.message}. Job paused.`, 'scraper', { 
+                                        lotNumber, 
+                                        eventId: auctionId, 
+                                        error: err.message 
+                                    });
+                                } catch (pauseErr) {
+                                    console.error(`Failed to pause job on error: ${pauseErr.message}`);
+                                }
+                            }
                         }
                     }
                 }
@@ -633,7 +844,20 @@ if (!fs.existsSync(finalFolder)) {
             } catch (err) {
             console.error(`❌ Failed auction ${auctionId}: ${err.message}`);
             if (jobId) {
+                // Pause job on error and save state
+                try {
+                    await updateJobStatus(jobId, 'paused');
+                    await saveResumeState(jobId, auctionId, null, eventIndex, {
+                        inProgressFile,
+                        finalFile,
+                        error: err.message,
+                        errorStack: err.stack
+                    });
+                    await logToDatabase(jobId, 'error', `Failed auction ${auctionId}: ${err.message}. Job paused.`, 'scraper', { auctionId, error: err.message });
+                } catch (pauseErr) {
+                    console.error(`Failed to pause job on error: ${pauseErr.message}`);
                 await logToDatabase(jobId, 'error', `Failed auction ${auctionId}: ${err.message}`, 'scraper', { auctionId, error: err.message });
+                }
             }
             }
 

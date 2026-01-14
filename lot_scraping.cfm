@@ -14,6 +14,76 @@
         <p class="text-gray-600 mt-2">Scrape auction lots from NumisBids and manage your lot database</p>
     </div>
 
+    <!-- Real-time Monitoring Dashboard -->
+    <div id="monitoringDashboard" class="bg-white rounded-xl shadow-sm p-6 mb-6" style="display: none;">
+        <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center justify-between">
+            <span>📊 <span class="ml-2">Real-time Monitoring</span></span>
+            <button onclick="toggleMonitoring()" class="text-sm text-gray-500 hover:text-gray-700">Hide</button>
+        </h2>
+        
+        <!-- Current Status -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-blue-50 rounded-lg p-4">
+                <div class="text-sm text-blue-600 font-medium mb-1">Current Event ID</div>
+                <div id="currentEventId" class="text-2xl font-bold text-blue-800">-</div>
+            </div>
+            <div class="bg-green-50 rounded-lg p-4">
+                <div class="text-sm text-green-600 font-medium mb-1">Lots Scraped</div>
+                <div id="lotsScraped" class="text-2xl font-bold text-green-800">0</div>
+            </div>
+            <div class="bg-purple-50 rounded-lg p-4">
+                <div class="text-sm text-purple-600 font-medium mb-1">Lots Inserted</div>
+                <div id="lotsInserted" class="text-2xl font-bold text-purple-800">0</div>
+            </div>
+            <div class="bg-orange-50 rounded-lg p-4">
+                <div class="text-sm text-orange-600 font-medium mb-1">Current Lot</div>
+                <div id="currentLotNumber" class="text-2xl font-bold text-orange-800">-</div>
+            </div>
+        </div>
+        
+        <!-- Progress Bars -->
+        <div class="mb-6">
+            <div class="mb-2 flex justify-between text-sm">
+                <span class="font-medium text-gray-700">Event Progress</span>
+                <span id="eventProgressText" class="text-gray-600">0 / 0</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-3">
+                <div id="eventProgressBar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+        </div>
+        
+        <div class="mb-6">
+            <div class="mb-2 flex justify-between text-sm">
+                <span class="font-medium text-gray-700">Overall Progress</span>
+                <span id="overallProgressText" class="text-gray-600">0%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-3">
+                <div id="overallProgressBar" class="bg-green-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+        </div>
+        
+        <!-- Control Buttons -->
+        <div class="flex space-x-3 mb-4">
+            <button id="pauseBtn" onclick="pauseJob()" class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors" style="display: none;">
+                ⏸️ Pause
+            </button>
+            <button id="resumeBtn" onclick="resumeJob()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors" style="display: none;">
+                ▶️ Resume
+            </button>
+            <button id="stopBtn" onclick="stopJob()" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors" style="display: none;">
+                ⏹️ Stop
+            </button>
+        </div>
+        
+        <!-- Activity Log -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Recent Activity</h3>
+            <div id="activityLog" class="text-xs text-gray-600 space-y-1 max-h-32 overflow-y-auto">
+                <div>Waiting for activity...</div>
+            </div>
+        </div>
+    </div>
+    
     <!-- Scraping Control -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <!-- Scraper Controls -->
@@ -21,6 +91,13 @@
             <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
                 🎮 <span class="ml-2">Scraper Control</span>
             </h2>
+            
+            <!-- Show Monitoring Button -->
+            <div class="mb-4">
+                <button onclick="toggleMonitoring()" class="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm">
+                    📊 Show Real-time Monitoring
+                </button>
+            </div>
             
             <!-- Quick Actions -->
             <div class="grid grid-cols-2 gap-3 mb-6">
@@ -275,5 +352,190 @@
         </cfoutput>
     </div>
 </div>
+
+<script>
+let monitoringInterval = null;
+let isMonitoringVisible = false;
+
+function toggleMonitoring() {
+    const dashboard = document.getElementById('monitoringDashboard');
+    if (dashboard.style.display === 'none') {
+        dashboard.style.display = 'block';
+        isMonitoringVisible = true;
+        startMonitoring();
+    } else {
+        dashboard.style.display = 'none';
+        isMonitoringVisible = false;
+        stopMonitoring();
+    }
+}
+
+function startMonitoring() {
+    if (monitoringInterval) clearInterval(monitoringInterval);
+    updateMonitoring(); // Initial update
+    monitoringInterval = setInterval(updateMonitoring, 2500); // Update every 2.5 seconds
+}
+
+function stopMonitoring() {
+    if (monitoringInterval) {
+        clearInterval(monitoringInterval);
+        monitoringInterval = null;
+    }
+}
+
+function updateMonitoring() {
+    fetch('tasks/run_scraper.cfm?action=status&ajax=1')
+        .then(response => response.json())
+        .then(data => {
+            if (data.currentJob && data.currentJob.id) {
+                const job = data.currentJob;
+                
+                // Update status fields
+                document.getElementById('currentEventId').textContent = job.currentEventId || '-';
+                document.getElementById('currentLotNumber').textContent = job.currentLotNumber || '-';
+                
+                // Update statistics
+                if (job.statistics) {
+                    const stats = job.statistics;
+                    document.getElementById('lotsScraped').textContent = stats.processedLots || 0;
+                    document.getElementById('lotsInserted').textContent = stats.processedLots || 0;
+                    
+                    // Update progress bars
+                    if (job.totalEvents > 0) {
+                        const eventProgress = ((job.currentEventIndex + 1) / job.totalEvents) * 100;
+                        document.getElementById('eventProgressBar').style.width = eventProgress + '%';
+                        document.getElementById('eventProgressText').textContent = 
+                            (job.currentEventIndex + 1) + ' / ' + job.totalEvents;
+                    }
+                    
+                    if (stats.totalEvents > 0) {
+                        const overallProgress = (stats.processedEvents / stats.totalEvents) * 100;
+                        document.getElementById('overallProgressBar').style.width = overallProgress + '%';
+                        document.getElementById('overallProgressText').textContent = Math.round(overallProgress) + '%';
+                    }
+                }
+                
+                // Update button states
+                if (job.status === 'running') {
+                    document.getElementById('pauseBtn').style.display = 'inline-block';
+                    document.getElementById('resumeBtn').style.display = 'none';
+                    document.getElementById('stopBtn').style.display = 'inline-block';
+                } else if (job.status === 'paused') {
+                    document.getElementById('pauseBtn').style.display = 'none';
+                    document.getElementById('resumeBtn').style.display = 'inline-block';
+                    document.getElementById('stopBtn').style.display = 'inline-block';
+                } else {
+                    document.getElementById('pauseBtn').style.display = 'none';
+                    document.getElementById('resumeBtn').style.display = 'none';
+                    document.getElementById('stopBtn').style.display = 'none';
+                }
+                
+                // Show dashboard if job is running or paused
+                if ((job.status === 'running' || job.status === 'paused') && !isMonitoringVisible) {
+                    document.getElementById('monitoringDashboard').style.display = 'block';
+                    isMonitoringVisible = true;
+                }
+            } else {
+                // No active job
+                document.getElementById('pauseBtn').style.display = 'none';
+                document.getElementById('resumeBtn').style.display = 'none';
+                document.getElementById('stopBtn').style.display = 'none';
+            }
+            
+            // Update activity log
+            if (data.logs && data.logs.length > 0) {
+                const logDiv = document.getElementById('activityLog');
+                const recentLogs = data.logs.slice(-5).reverse();
+                logDiv.innerHTML = recentLogs.map(log => 
+                    `<div>[${log.timestamp}] ${log.message}</div>`
+                ).join('');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching monitoring data:', error);
+        });
+}
+
+function pauseJob() {
+    fetch('tasks/run_scraper.cfm?action=pause&ajax=1', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                addActivityLog('Job paused successfully');
+                updateMonitoring();
+            } else {
+                alert('Error pausing job: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error pausing job:', error);
+            alert('Error pausing job');
+        });
+}
+
+function resumeJob() {
+    fetch('tasks/run_scraper.cfm?action=resume&ajax=1', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                addActivityLog('Job resumed successfully');
+                updateMonitoring();
+            } else {
+                alert('Error resuming job: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error resuming job:', error);
+            alert('Error resuming job');
+        });
+}
+
+function stopJob() {
+    if (confirm('Are you sure you want to stop the job?')) {
+        fetch('tasks/run_scraper.cfm?action=stop&ajax=1', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    addActivityLog('Job stopped successfully');
+                    stopMonitoring();
+                    updateMonitoring();
+                } else {
+                    alert('Error stopping job: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error stopping job:', error);
+                alert('Error stopping job');
+            });
+    }
+}
+
+function addActivityLog(message) {
+    const logDiv = document.getElementById('activityLog');
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = document.createElement('div');
+    logEntry.textContent = `[${timestamp}] ${message}`;
+    logDiv.insertBefore(logEntry, logDiv.firstChild);
+    
+    // Keep only last 10 entries
+    while (logDiv.children.length > 10) {
+        logDiv.removeChild(logDiv.lastChild);
+    }
+}
+
+// Auto-start monitoring if page loads with active job
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function() {
+        fetch('tasks/run_scraper.cfm?action=status&ajax=1')
+            .then(response => response.json())
+            .then(data => {
+                if (data.currentJob && (data.currentJob.status === 'running' || data.currentJob.status === 'paused')) {
+                    toggleMonitoring();
+                }
+            })
+            .catch(error => console.error('Error checking initial status:', error));
+    }, 1000);
+});
+</script>
 
 </cfmodule>
