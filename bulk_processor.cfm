@@ -72,7 +72,7 @@
         <!-- Activity Log -->
         <div class="bg-gray-50 rounded-lg p-4">
             <h3 class="text-sm font-semibold text-gray-700 mb-2">Recent Activity</h3>
-            <div id="activityLog" class="text-xs text-gray-600 space-y-1 max-h-32 overflow-y-auto">
+            <div id="activityLog" class="text-xs text-gray-600 space-y-1 max-h-64 overflow-y-auto">
                 <div>Waiting for activity...</div>
             </div>
         </div>
@@ -155,16 +155,15 @@
         }
     }
     
-    // Get paths from application
+    // Get paths from application - always expand to full paths
     paths = application.paths ?: {};
-    finalDir = paths.finalDir ?: expandPath("./allAuctionLotsData_final");
-    inProgressDir = paths.inProgressDir ?: expandPath("./allAuctionLotsData_inprogress");
+    finalDir = expandPath("./allAuctionLotsData_final");
+    inProgressDir = expandPath("./allAuctionLotsData_inprogress");
     nodeExe = paths.nodeBinary ?: "node.exe";
     inserterScript = expandPath("./insert_lots_into_db.js");
     
     // Get all JSON files
     allFiles = [];
-    
     if (directoryExists(finalDir)) {
         finalDirContents = directoryList(finalDir, false, "name", "*.json");
         if (isArray(finalDirContents)) {
@@ -253,212 +252,30 @@
         totalSize += file.size;
     }
     
-    // Handle actions
-    action = url.action ?: "";
     </cfscript>
     
-    <cfif action == "process_selected">
-        <cfset selectedFiles = url.selectedFiles ?: "" />
-        <cfif len(selectedFiles)>
-            <cfset fileList = listToArray(selectedFiles) />
-            
-            <!--- Process each selected file --->
-            <cfset results = [] />
-            <cfloop array="#fileList#" index="file">
-                <cftry>
-                    <cfset outTxt = "" />
-                    <cfset errTxt = "" />
-                    <cfexecute
-                        name="#nodeExe#"
-                        arguments='"#inserterScript#"'
-                        timeout="900"
-                        variable="outTxt"
-                        errorVariable="errTxt" />
-                    <cfset result = {
-                        file: file,
-                        success: true,
-                        stdout: outTxt,
-                        stderr: errTxt,
-                        timestamp: now()
-                    } />
-                <cfcatch type="any">
-                    <cfset result = {
-                        file: file,
-                        success: false,
-                        error: cfcatch.message,
-                        timestamp: now()
-                    } />
-                </cfcatch>
-                </cftry>
-                <cfset arrayAppend(results, result) />
-            </cfloop>
-            
-            <cfset session.bulkProcessResults = results />
-            <cflocation url="bulk_processor.cfm?action=results" addtoken="false" />
-        </cfif>
-    </cfif>
-    
-    <cfif action == "process_all">
-        <!--- Process all files --->
-        <cfset results = [] />
-        <cfloop array="#allFiles#" index="file">
-            <cftry>
-                <cfset outTxt = "" />
-                <cfset errTxt = "" />
-                <cfexecute
-                    name="#nodeExe#"
-                    arguments='"#inserterScript#"'
-                    timeout="900"
-                    variable="outTxt"
-                    errorVariable="errTxt" />
-                <cfset result = {
-                    file: file.name,
-                    success: true,
-                    stdout: outTxt,
-                    stderr: errTxt,
-                    timestamp: now()
-                } />
-            <cfcatch type="any">
-                <cfset result = {
-                    file: file.name,
-                    success: false,
-                    error: cfcatch.message,
-                    timestamp: now()
-                } />
-            </cfcatch>
-            </cftry>
-            <cfset arrayAppend(results, result) />
-        </cfloop>
-        
-        <cfset session.bulkProcessResults = results />
-        <cflocation url="bulk_processor.cfm?action=results" addtoken="false" />
-    </cfif>
-
-    <cfif action == "results" AND structKeyExists(session, "bulkProcessResults")>
-        <div class="bg-white rounded-xl shadow-sm p-6 mb-6">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">Bulk Processing Results</h2>
-            <div class="space-y-4">
-                <cfloop array="#session.bulkProcessResults#" index="result">
-                    <div class="border border-gray-200 rounded-lg p-4">
-                        <div class="flex items-center justify-between mb-2">
-                            <h3 class="text-lg font-medium text-gray-900">#encodeForHtml(result.file)#</h3>
-                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium #result.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'#">
-                                #result.success ? '✅ Success' : '❌ Failed'#
-                            </span>
-                        </div>
-                        
-                        <cfif result.success>
-                            <div class="space-y-2">
-                                <div>
-                                    <h4 class="text-sm font-medium text-gray-700">STDOUT</h4>
-                                    <pre class="bg-gray-900 text-green-400 p-2 rounded text-xs overflow-x-auto whitespace-pre-wrap max-h-32">#encodeForHtml(result.stdout)#</pre>
-                                </div>
-                                <cfif len(result.stderr)>
-                                    <div>
-                                        <h4 class="text-sm font-medium text-gray-700">STDERR</h4>
-                                        <pre class="bg-gray-900 text-red-400 p-2 rounded text-xs overflow-x-auto whitespace-pre-wrap max-h-32">#encodeForHtml(result.stderr)#</pre>
-                                    </div>
-                                </cfif>
-                            </div>
-                        <cfelse>
-                            <div class="text-red-600">
-                                <strong>Error:</strong> #encodeForHtml(result.error)#
-                            </div>
-                        </cfif>
-                        
-                        <div class="text-xs text-gray-500 mt-2">
-                            Processed: #dateFormat(result.timestamp, "mm/dd/yyyy")# #timeFormat(result.timestamp, "HH:mm:ss")#
-                        </div>
-                    </div>
-                </cfloop>
+    <!-- Quick Stats -->
+    <cfoutput><div class="bg-white rounded-xl shadow-sm p-6 mt-6">
+        <h2 class="text-xl font-semibold text-gray-800 mb-4">Quick Stats</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="text-center">
+                <div class="text-2xl font-bold text-blue-600">#arrayLen(allFiles)#</div>
+                <div class="text-sm text-gray-500">Total Files</div>
             </div>
-            
-            <div class="mt-6">
-                <a href="bulk_processor.cfm" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                    ← Back to File List
-                </a>
+            <div class="text-center">
+                <div class="text-2xl font-bold text-green-600">#finalCount#</div>
+                <div class="text-sm text-gray-500">Final Directory</div>
+            </div>
+            <div class="text-center">
+                <div class="text-2xl font-bold text-orange-600">#inProgressCount#</div>
+                <div class="text-sm text-gray-500">In Progress</div>
+            </div>
+            <div class="text-center">
+                <div class="text-2xl font-bold text-purple-600">#formatFileSize(totalSize)#</div>
+                <div class="text-sm text-gray-500">Total Size</div>
             </div>
         </div>
-        
-        <cfset structDelete(session, "bulkProcessResults")>
-    <cfelse>
-        <!-- File Selection Interface -->
-        <div class="bg-white rounded-xl shadow-sm p-6 mb-6">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-xl font-semibold text-gray-800">Select Files to Process</h2>
-                <div class="flex space-x-2">
-                    <button onclick="selectAll()" class="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200">
-                        Select All
-                    </button>
-                    <button onclick="selectNone()" class="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200">
-                        Select None
-                    </button>
-                </div>
-            </div>
-            
-            <form id="bulkForm" action="bulk_processor.cfm" method="get">
-                <input type="hidden" name="action" value="process_selected">
-                
-                <div class="space-y-2 max-h-96 overflow-y-auto">
-                    <cfloop array="#allFiles#" index="file">
-                        <div class="border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition-colors">
-                            <label class="flex items-center space-x-3 cursor-pointer">
-                                <input type="checkbox" name="selectedFiles" value="#encodeForHtml(file.name)#" class="file-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500">
-                                <div class="flex-1 min-w-0">
-                                    <p class="text-sm font-medium text-gray-900 truncate">#encodeForHtml(file.name)#</p>
-                                    <p class="text-xs text-gray-500">
-                                        #formatFileSize(file.size)# • #dateFormat(file.modified, "mm/dd/yyyy")# #timeFormat(file.modified, "HH:mm")# • #file.directory#
-                                    </p>
-                                </div>
-                                <div class="flex space-x-2">
-                                    <a href="file:///#file.path#" 
-                                       class="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50">
-                                        👁️ View
-                                    </a>
-                                </div>
-                            </label>
-                        </div>
-                    </cfloop>
-                </div>
-                
-                <div class="mt-6 flex space-x-4">
-                    <button type="submit" 
-                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                            onclick="return confirm('Process selected files? This may take a while.')">
-                        🔄 Process Selected Files
-                    </button>
-                    <a href="bulk_processor.cfm?action=process_all" 
-                       class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                       onclick="return confirm('Process ALL files? This may take a very long time.')">
-                        ⚡ Process All Files
-                    </a>
-                </div>
-            </form>
-        </div>
-
-        <!-- Quick Stats -->
-        <div class="bg-white rounded-xl shadow-sm p-6">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">Quick Stats</h2>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div class="text-center">
-                    <div class="text-2xl font-bold text-blue-600">#arrayLen(allFiles)#</div>
-                    <div class="text-sm text-gray-500">Total Files</div>
-                </div>
-                <div class="text-center">
-                    <div class="text-2xl font-bold text-green-600">#finalCount#</div>
-                    <div class="text-sm text-gray-500">Final Directory</div>
-                </div>
-                <div class="text-center">
-                    <div class="text-2xl font-bold text-orange-600">#inProgressCount#</div>
-                    <div class="text-sm text-gray-500">In Progress</div>
-                </div>
-                <div class="text-center">
-                    <div class="text-2xl font-bold text-purple-600">#formatFileSize(totalSize)#</div>
-                    <div class="text-sm text-gray-500">Total Size</div>
-                </div>
-            </div>
-        </div>
-    </cfif>
+    </div></cfoutput>
 </div>
 
 <script>
@@ -743,8 +560,9 @@ function updateMonitoring() {
                            !logText.toLowerCase().includes('process detection') &&
                            !logText.toLowerCase().includes('checking debug log');
                 });
-                // Show most recent logs (keep last 20 for better visibility)
-                const recentLogs = filteredLogs.slice(-20);
+                // Show most recent 20 logs, with newest at bottom
+                // Database returns newest first, so we reverse to get oldest-to-newest order
+                const recentLogs = filteredLogs.slice(0, 20).reverse();
                 // Clear and rebuild log display
                 logDiv.innerHTML = '';
                 recentLogs.forEach(log => {
@@ -780,11 +598,14 @@ function updateMonitoring() {
                     const infoDiv = document.createElement('div');
                     infoDiv.className = 'text-blue-600 font-medium';
                     infoDiv.textContent = `[${new Date().toLocaleTimeString()}] ${currentInfo}`;
-                    logDiv.insertBefore(infoDiv, logDiv.firstChild);
-                    // Keep only last 10 entries
-                    while (logDiv.children.length > 10) {
-                        logDiv.removeChild(logDiv.lastChild);
+                    // Add at bottom (consistent with other logs)
+                    logDiv.appendChild(infoDiv);
+                    // Keep only last 25 entries (remove from top)
+                    while (logDiv.children.length > 25) {
+                        logDiv.removeChild(logDiv.firstChild);
                     }
+                    // Auto-scroll to bottom
+                    logDiv.scrollTop = logDiv.scrollHeight;
                 }
             }
         })
@@ -1194,12 +1015,17 @@ function addActivityLog(message) {
     const timestamp = new Date().toLocaleTimeString();
     const logEntry = document.createElement('div');
     logEntry.textContent = `[${timestamp}] ${message}`;
-    logDiv.insertBefore(logEntry, logDiv.firstChild);
     
-    // Keep only last 10 entries
+    // Add new entry at the bottom
+    logDiv.appendChild(logEntry);
+    
+    // Keep only last 10 entries (remove from top)
     while (logDiv.children.length > 10) {
-        logDiv.removeChild(logDiv.lastChild);
+        logDiv.removeChild(logDiv.firstChild);
     }
+    
+    // Auto-scroll to bottom to show latest
+    logDiv.scrollTop = logDiv.scrollHeight;
 }
 
 // Handle run mode changes
