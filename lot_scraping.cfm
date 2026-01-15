@@ -11,7 +11,7 @@
             🏷️ <span class="ml-3">Auction Lot Scraping</span>
         </h1>
         <p class="text-gray-600 mt-2">Scrape auction lots from NumisBids and manage your lot database</p>
-    </div>
+    </div> 
 
     <!-- Real-time Monitoring Dashboard -->
     <div id="monitoringDashboard" class="bg-white rounded-xl shadow-sm p-6 mb-6" style="display: none;">
