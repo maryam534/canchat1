@@ -292,9 +292,9 @@
                 abort;
             }
             
-            // Check if a job is already running
+            // Check if a job is already running or paused for the same event
             checkRunning = queryExecute(
-                "SELECT id FROM scraper_jobs WHERE status IN ('running','paused') ORDER BY created_at DESC LIMIT 1",
+                "SELECT id, status, current_event_id FROM scraper_jobs WHERE status IN ('running','paused') ORDER BY created_at DESC LIMIT 1",
                 [],
                 {datasource: application.db.dsn}
             );
@@ -303,7 +303,51 @@
             forceStart = ( (url.force ?: form.force ?: "") == "1" );
 
             if (checkRunning.recordCount > 0 AND !forceStart) {
-                result.error = "A scraper job is already running or paused. Please stop or resume the existing job first.";
+                // If there's a PAUSED job for the SAME event, auto-resume it instead of error
+                if (checkRunning.status == "paused" AND len(trim(targetEventId)) AND checkRunning.current_event_id == trim(targetEventId)) {
+                    // Auto-resume the paused job - execute the resume logic
+                    jobId = checkRunning.id;
+                    currentEventId = checkRunning.current_event_id;
+                    
+                    singleJs = expandPath('/scrape_single_event.js');
+                    workDir = getDirectoryFromPath(singleJs);
+                    outPath = paths.inProgressDir & '/auction_' & trim(currentEventId) & '_lots.jsonl';
+                    outPath = replace(outPath, '\', '/', 'all');
+                    
+                    nodeExe = paths.nodeBinary ?: "node.exe";
+                    nodeExeQuoted = (find(" ", nodeExe) > 0) ? '"' & nodeExe & '"' : nodeExe;
+                    scraperCmd = '/c cd /d "' & workDir & '" && ' & nodeExeQuoted & ' "' & singleJs & '" --event-id ' & trim(currentEventId) & ' --output-file "' & outPath & '" --job-id ' & jobId;
+                    
+                    cmdExe = paths.cmdExe ?: "cmd.exe";
+                    output = "";
+                    
+                    logToDatabase(jobId, "info", "Auto-resuming paused job for event " & currentEventId, "system");
+                    
+                    cfexecute(
+                        name = cmdExe,
+                        arguments = scraperCmd,
+                        timeout = 0,
+                        variable = "output"
+                    );
+                    
+                    // Update job status to running
+                    updateJobStatus(jobId, "running");
+                    logToDatabase(jobId, "info", "Scraper job resumed successfully (auto-resume). Loading state from database.", "system");
+                    
+                    application.scraperStatus.isRunning = true;
+                    application.scraperStatus.lastUpdate = now();
+                    
+                    result.success = true;
+                    result.error = "";
+                    result.jobId = jobId;
+                    result.message = "Auto-resumed paused job " & jobId & " for event " & currentEventId;
+                    result.autoResumed = true;
+                    
+                    writeOutput(serializeJSON(result));
+                    abort;
+                } else {
+                    result.error = "A scraper job is already running or paused (Job ##" & checkRunning.id & ", status: " & checkRunning.status & "). Please stop or resume the existing job first.";
+                }
             } else {
                 // Ensure paths are initialized
                 if (!structKeyExists(paths, "scraper") OR !len(paths.scraper)) {
@@ -787,23 +831,44 @@
                 result.error = "No paused jobs found to resume.";
             } else {
                 jobId = findPausedJob.id;
+                currentEventId = findPausedJob.current_event_id ?: "";
                 
-                // Resume the scraper process with job ID (scraper will load state from database)
-                workDir = getDirectoryFromPath(paths.scraper);
-                cmdExe  = paths.cmdExe;
-                scraperCmd = '/c cd /d "' & workDir & '" && node "' & paths.scraper & '" --job-id=' & jobId;
+                // Determine which script to use based on whether it's a single event job
+                if (len(trim(currentEventId))) {
+                    // Single event mode - use scrape_single_event.js
+                    singleJs = expandPath('/scrape_single_event.js');
+                    workDir = getDirectoryFromPath(singleJs);
+                    outPath = paths.inProgressDir & '/auction_' & trim(currentEventId) & '_lots.jsonl';
+                    outPath = replace(outPath, '\', '/', 'all');
+                    
+                    // Quote node path if it has spaces (same as start action)
+                    nodeExe = paths.nodeBinary ?: "node.exe";
+                    nodeExeQuoted = (find(" ", nodeExe) > 0) ? '"' & nodeExe & '"' : nodeExe;
+                    
+                    scraperCmd = '/c cd /d "' & workDir & '" && ' & nodeExeQuoted & ' "' & singleJs & '" --event-id ' & trim(currentEventId) & ' --output-file "' & outPath & '" --job-id ' & jobId;
+                    logToDatabase(jobId, "info", "Resuming single event scraper for event " & currentEventId, "system");
+                } else {
+                    // Multi-event mode - use scrap_all_auctions_lots_data.js
+                    workDir = getDirectoryFromPath(paths.scraper);
+                    nodeExe = paths.nodeBinary ?: "node.exe";
+                    nodeExeQuoted = (find(" ", nodeExe) > 0) ? '"' & nodeExe & '"' : nodeExe;
+                    scraperCmd = '/c cd /d "' & workDir & '" && ' & nodeExeQuoted & ' "' & paths.scraper & '" --job-id=' & jobId;
+                    logToDatabase(jobId, "info", "Resuming multi-event scraper", "system");
+                }
+                
+                cmdExe = paths.cmdExe ?: "cmd.exe";
                 output = ""; 
 
                 cfexecute(
                     name = cmdExe,
-                    arguments =scraperCmd,
+                    arguments = scraperCmd,
                     timeout = 0,
                     variable = "output"
                 );
                 
                 // Update job status to running
                 updateJobStatus(jobId, "running");
-                logToDatabase(jobId, "info", "Scraper job resumed successfully. Loading state from database.", "system");
+                logToDatabase(jobId, "info", "Scraper job resumed successfully via Resume button.", "system");
                 
                 application.scraperStatus.isRunning = true;
                 application.scraperStatus.lastUpdate = now();
@@ -811,7 +876,7 @@
                 result.success = true;
                 result.message = "Scraper job resumed successfully. Resuming from saved state.";
                 result.resumeState = {
-                    currentEventId: findPausedJob.current_event_id ?: "",
+                    currentEventId: currentEventId,
                     currentLotNumber: findPausedJob.current_lot_number ?: "",
                     currentEventIndex: findPausedJob.current_event_index ?: 0
                 };

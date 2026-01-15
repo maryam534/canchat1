@@ -625,6 +625,25 @@ function updateMonitoring() {
                 }
             }
             
+            // Always show buttons if we have a job status, even if dashboard isn't visible yet
+            // This ensures buttons are visible as soon as a job starts
+            if (hasActiveJob) {
+                console.log('Active job detected, showing buttons. Status:', statusLower, 'JobStatus:', jobStatusLower);
+                if (statusLower === 'running' || jobStatusLower === 'running') {
+                    document.getElementById('pauseBtn').style.display = 'inline-block';
+                    document.getElementById('resumeBtn').style.display = 'none';
+                    document.getElementById('stopBtn').style.display = 'inline-block';
+                    console.log('Buttons shown: Pause and Stop (running)');
+                } else if (statusLower === 'paused' || jobStatusLower === 'paused') {
+                    document.getElementById('pauseBtn').style.display = 'none';
+                    document.getElementById('resumeBtn').style.display = 'inline-block';
+                    document.getElementById('stopBtn').style.display = 'inline-block';
+                    console.log('Buttons shown: Resume and Stop (paused)');
+                }
+            } else {
+                console.log('No active job detected. Status:', statusLower, 'JobStatus:', jobStatusLower);
+            }
+            
             // Handle both camelCase and UPPERCASE keys from ColdFusion
             const jobId = job && (job.id || job.ID);
             if (jobId) {
@@ -676,18 +695,22 @@ function updateMonitoring() {
                 
                 // Update button states - handle uppercase keys
                 const currentJobStatus = (job.status || job.STATUS || '').toLowerCase();
+                console.log('Updating button states, job status:', currentJobStatus);
                 if (currentJobStatus === 'running') {
                     document.getElementById('pauseBtn').style.display = 'inline-block';
                     document.getElementById('resumeBtn').style.display = 'none';
                     document.getElementById('stopBtn').style.display = 'inline-block';
+                    console.log('Buttons shown: Pause and Stop (running)');
                 } else if (currentJobStatus === 'paused') {
                     document.getElementById('pauseBtn').style.display = 'none';
                     document.getElementById('resumeBtn').style.display = 'inline-block';
                     document.getElementById('stopBtn').style.display = 'inline-block';
+                    console.log('Buttons shown: Resume and Stop (paused)');
                 } else {
                     document.getElementById('pauseBtn').style.display = 'none';
                     document.getElementById('resumeBtn').style.display = 'none';
                     document.getElementById('stopBtn').style.display = 'none';
+                    console.log('Buttons hidden (status:', currentJobStatus, ')');
                 }
             } else {
                 // Job exists but details not loaded yet - use status from response
@@ -955,16 +978,31 @@ function startBulkScraping(forceStart = false) {
         const hasJobId = data.jobId || data.JOBID || data.job_id;
         const noError = (!data.error || data.error === '') && (!data.ERROR || data.ERROR === '');
         
-        // Success if: has success flag, OR has running status, OR has jobId with no error
-        const isSuccess = hasSuccessFlag || hasStatusRunning || (hasJobId && noError && data.SUCCESS !== false);
+        // Check for auto-resume
+        const isAutoResumed = data.autoResumed === true || data.AUTORESUMED === true;
+        
+        // Success if: has success flag, OR has running status, OR has jobId with no error, OR auto-resumed
+        const isSuccess = hasSuccessFlag || hasStatusRunning || isAutoResumed || (hasJobId && noError && data.SUCCESS !== false);
         
         if (isSuccess) {
             const jobId = data.jobId || data.JOBID || data.job_id || 'N/A';
-            const successMsg = data.MESSAGE || data.message || 'Bulk scraping started successfully!';
+            const successMsg = data.MESSAGE || data.message || (isAutoResumed ? 'Job auto-resumed!' : 'Bulk scraping started successfully!');
             addActivityLog(successMsg + ' Job ID: ' + jobId);
             
             // Hide existing job alert if shown
             document.getElementById('existingJobAlert').style.display = 'none';
+            
+            // Show monitoring dashboard and buttons immediately when job starts
+            if (!isMonitoringVisible) {
+                document.getElementById('monitoringDashboard').style.display = 'block';
+                isMonitoringVisible = true;
+                startMonitoring();
+            }
+            
+            // Show pause and stop buttons immediately (job is starting/running)
+            document.getElementById('pauseBtn').style.display = 'inline-block';
+            document.getElementById('resumeBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'inline-block';
             
             // If response has logs, show them
             if (data.NEWLOGS && Array.isArray(data.NEWLOGS)) {
@@ -1019,9 +1057,17 @@ function startBulkScraping(forceStart = false) {
         }
     })
     .catch(error => {
-        console.error('Error starting scraping:', error);
-        alert('Error starting scraping: ' + error.message);
-        addActivityLog('Error: ' + error.message);
+        // Only show error if there's actually an error message
+        const errorMsg = error.message || error.toString() || '';
+        if (errorMsg && errorMsg.trim() !== '') {
+            console.error('Error starting scraping:', error);
+            alert('Error starting scraping: ' + errorMsg);
+            addActivityLog('Error: ' + errorMsg);
+        } else {
+            // Empty error - might be a false positive, check monitoring
+            console.log('Caught empty error, checking job status...');
+            updateMonitoring();
+        }
     });
 }
 
@@ -1170,24 +1216,49 @@ document.addEventListener('DOMContentLoaded', function() {
         checkExistingJobs();
         
         // Also check status directly and show monitoring if job is active
-        fetch('tasks/run_scraper.cfm?action=status')
-            .then(response => response.text())
-            .then(text => {
-                try {
-                    const data = JSON.parse(text);
-                    // Check if job is running or paused
-                    if ((data.STATUS === 'running' || data.STATUS === 'paused' || 
-                         data.status === 'running' || data.status === 'paused') ||
-                        (data.currentJob && (data.currentJob.status === 'running' || data.currentJob.status === 'paused'))) {
-                        // Auto-show monitoring
-                        if (!isMonitoringVisible) {
-                            document.getElementById('monitoringDashboard').style.display = 'block';
-                            isMonitoringVisible = true;
-                            startMonitoring();
-                        }
+        fetch('tasks/run_scraper.cfm?action=status&ajax=1')
+            .then(response => {
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    return response.json();
+                }
+                return response.text().then(text => {
+                    try {
+                        return JSON.parse(text);
+                    } catch (e) {
+                        console.error('Error parsing status:', e);
+                        return null;
                     }
-                } catch (e) {
-                    console.error('Error parsing status:', e);
+                });
+            })
+            .then(data => {
+                if (!data) return;
+                
+                // Check if job is running or paused - handle both uppercase and lowercase keys
+                const status = (data.STATUS || data.status || '').toLowerCase();
+                const currentJob = data.currentJob || data.CURRENTJOB;
+                const jobStatus = currentJob ? (currentJob.status || currentJob.STATUS || '').toLowerCase() : '';
+                const hasActiveJob = status === 'running' || status === 'paused' || 
+                                    jobStatus === 'running' || jobStatus === 'paused';
+                
+                if (hasActiveJob) {
+                    // Auto-show monitoring dashboard
+                    if (!isMonitoringVisible) {
+                        document.getElementById('monitoringDashboard').style.display = 'block';
+                        isMonitoringVisible = true;
+                        startMonitoring();
+                    }
+                    
+                    // Show appropriate buttons based on status
+                    if (status === 'running' || jobStatus === 'running') {
+                        document.getElementById('pauseBtn').style.display = 'inline-block';
+                        document.getElementById('resumeBtn').style.display = 'none';
+                        document.getElementById('stopBtn').style.display = 'inline-block';
+                    } else if (status === 'paused' || jobStatus === 'paused') {
+                        document.getElementById('pauseBtn').style.display = 'none';
+                        document.getElementById('resumeBtn').style.display = 'inline-block';
+                        document.getElementById('stopBtn').style.display = 'inline-block';
+                    }
                 }
             })
             .catch(error => console.error('Error checking initial status:', error));

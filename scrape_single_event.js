@@ -204,6 +204,113 @@ async function updateCurrentLot(jobId, eventId, lotNumber) {
     }
 }
 
+/**
+ * Check if job is paused or stopped
+ * @param {number} jobId - Job ID
+ * @returns {Promise<{isPaused: boolean, isStopped: boolean, status: string}>} - Status object
+ */
+async function checkJobStatus(jobId) {
+    if (!jobId) return {isPaused: false, isStopped: false, status: ''};
+    try {
+        const result = await pool.query(
+            `SELECT status FROM scraper_jobs WHERE id = $1`,
+            [jobId]
+        );
+        if (result.rows.length === 0) {
+            return {isPaused: false, isStopped: false, status: ''};
+        }
+        const status = result.rows[0].status || '';
+        return {
+            isPaused: status === 'paused',
+            isStopped: status === 'stopped',
+            status: status
+        };
+    } catch (err) {
+        console.error(`[Job Status Check Error] ${err.message}`);
+        return {isPaused: false, isStopped: false, status: ''};
+    }
+}
+
+/**
+ * Check if job is paused (backward compatibility)
+ * @param {number} jobId - Job ID
+ * @returns {Promise<boolean>} - True if job is paused
+ */
+async function checkPauseStatus(jobId) {
+    const status = await checkJobStatus(jobId);
+    return status.isPaused;
+}
+
+/**
+ * Get resume state from database
+ * @param {number} jobId - Job ID
+ * @returns {Promise<Object|null>} - Resume state object or null
+ */
+async function getResumeState(jobId) {
+    if (!jobId) return null;
+    try {
+        const result = await pool.query(
+            `SELECT resume_state, current_event_id, current_lot_number, current_event_index 
+             FROM scraper_jobs WHERE id = $1`,
+            [jobId]
+        );
+        
+        if (result.rows.length > 0) {
+            const row = result.rows[0];
+            let resumeState = null;
+            if (row.resume_state) {
+                try {
+                    resumeState = typeof row.resume_state === 'string' 
+                        ? JSON.parse(row.resume_state) 
+                        : row.resume_state;
+                } catch (e) {
+                    console.error(`[Get Resume State] Failed to parse resume_state: ${e.message}`);
+                }
+            }
+            return {
+                resumeState: resumeState,
+                currentEventId: row.current_event_id,
+                currentLotNumber: row.current_lot_number,
+                currentEventIndex: row.current_event_index || 0
+            };
+        }
+        return null;
+    } catch (err) {
+        console.error(`[Get Resume State Error] ${err.message}`);
+        return null;
+    }
+}
+
+/**
+ * Save resume state to database
+ * @param {number} jobId - Job ID
+ * @param {string} eventId - Current event ID
+ * @param {string} lotNumber - Last processed lot number
+ * @param {number} currentPage - Current page number
+ * @param {number} lotsScraped - Number of lots scraped so far
+ */
+async function saveResumeState(jobId, eventId, lotNumber, currentPage, lotsScraped) {
+    if (!jobId) return;
+    try {
+        const resumeState = {
+            eventId,
+            lotNumber,
+            currentPage,
+            lotsScraped,
+            timestamp: new Date().toISOString()
+        };
+        await pool.query(
+            `UPDATE scraper_jobs 
+             SET resume_state = $1, current_event_id = $2, current_lot_number = $3 
+             WHERE id = $4`,
+            [JSON.stringify(resumeState), eventId, lotNumber, jobId]
+        );
+        console.log(`[PAUSE] Resume state saved: eventId=${eventId}, lotNumber=${lotNumber}, page=${currentPage}, lotsScraped=${lotsScraped}`);
+    } catch (err) {
+        console.error(`[Save Resume State Error] ${err.message}`);
+    }
+}
+
 // Log that we're about to parse arguments
 try {
     const debugLogFile = path.resolve(__dirname, 'scrape_debug.log');
@@ -673,13 +780,32 @@ try {
   page.setDefaultTimeout(45000)
   page.setDefaultNavigationTimeout(60000)
 
+  // Debug log - page created
+  try {
+    const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+    fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [DEBUG] Page created, about to navigate...\n`);
+  } catch (e) {}
+
   try {
     const baseUrl = `https://www.numisbids.com/sale/${eventId}`
     log(`Navigating: ${baseUrl}`)
+    
+    // Debug log - before navigation
+    try {
+      const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+      fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [DEBUG] Navigating to: ${baseUrl}\n`);
+    } catch (e) {}
+    
     if (jobId) {
       await logToDatabase(jobId, 'info', `Navigating: ${baseUrl}`, 'scraper');
     }
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    
+    // Debug log - after navigation
+    try {
+      const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+      fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [DEBUG] Navigation successful\n`);
+    } catch (e) {}
 
     // View all lots if present
     try {
@@ -722,31 +848,161 @@ try {
       eventDate = meta.eventDate
       totalPages = meta.totalPages
       
+      // Debug log - metadata retrieved
+      try {
+        const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+        fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [DEBUG] Auction metadata: name=${auctionName}, totalPages=${totalPages}\n`);
+      } catch (e) {}
+      
       // Log auction info (like command line: "Auction 10258 — Page 1")
       if (jobId) {
         await logToDatabase(jobId, 'info', `Auction ${eventId} — Page 1`, 'scraper');
       }
-    } catch {}
-
-    // Create/clear the output file
-    try {
-      fs.writeFileSync(inProgressFile, '');
-      console.log(`[FILE] Created output file: ${inProgressFile}`);
-      if (jobId) {
-        await logToDatabase(jobId, 'info', `Output file created: ${inProgressFile}`, 'scraper');
-      }
-    } catch (fileErr) {
-      console.error(`[FILE ERROR] Failed to create output file: ${fileErr.message}`);
-      if (jobId) {
-        await logToDatabase(jobId, 'error', `Failed to create output file: ${fileErr.message}`, 'scraper');
-      }
+    } catch (metaErr) {
+      // Debug log - metadata error
+      try {
+        const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+        fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [DEBUG] Metadata error: ${metaErr.message}\n`);
+      } catch (e) {}
     }
+
     const seenLots = new Set()
     let lotsScraped = 0
+    let startPage = 1
+    
+    // Debug log - before resume check
+    try {
+      const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+      fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [DEBUG] About to check resume state, jobId=${jobId}\n`);
+    } catch (e) {}
+    
+    // Check for resume state if jobId is provided (BEFORE clearing the file)
+    let resumeState = null;
+    if (jobId) {
+        console.log(`[RESUME CHECK] Checking for resume state for jobId=${jobId}`);
+        
+        // Debug log - inside resume check
+        try {
+          const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+          fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [RESUME CHECK] Checking resume state for jobId=${jobId}\n`);
+        } catch (e) {}
+        
+        // First check if file exists (regardless of database state)
+        const fileExists = fs.existsSync(inProgressFile);
+        const fileHasData = fileExists && fs.statSync(inProgressFile).size > 0;
+        
+        // Check resume state from database
+        const savedState = await getResumeState(jobId);
+        console.log(`[RESUME CHECK] Saved state result:`, JSON.stringify(savedState));
+        console.log(`[RESUME CHECK] File check: exists=${fileExists}, hasData=${fileHasData}, path=${inProgressFile}`);
+        
+        // Debug log
+        try {
+          const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+          fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [RESUME CHECK] savedState: ${JSON.stringify(savedState)}\n`);
+        } catch (e) {}
+        
+        console.log(`[RESUME CHECK] File exists: ${fileExists}, has data: ${fileHasData}`);
+        try {
+          const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+          fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [RESUME CHECK] File: ${inProgressFile}, exists=${fileExists}, hasData=${fileHasData}\n`);
+        } catch (e) {}
+        
+        // Load resume state if resume_state exists OR if file has data (indicates previous scraping)
+        // Key: Check fileHasData FIRST before database state
+        if (fileHasData || (savedState && savedState.resumeState)) {
+            if (savedState && savedState.resumeState) {
+                resumeState = savedState.resumeState;
+                console.log(`[RESUME] Using database resume_state`);
+            } else if (fileHasData) {
+                // If resume_state is null but file has data, reconstruct from file
+                console.log(`[RESUME] No resume_state JSON, but file has data. Reconstructing from file.`);
+                resumeState = {
+                    eventId: savedState?.currentEventId || eventId,
+                    currentPage: 1, // Default to page 1
+                    lotsScraped: 0, // Will be loaded from file below
+                    lotNumber: savedState?.currentLotNumber || ''
+                };
+                console.log(`[RESUME] Reconstructed resume state:`, JSON.stringify(resumeState));
+            }
+            
+            if (resumeState) {
+                startPage = resumeState.currentPage || 1;
+                lotsScraped = resumeState.lotsScraped || 0;
+                console.log(`[RESUME] Loading saved state: page=${startPage}, lotsScraped=${lotsScraped}, lotNumber=${resumeState.lotNumber}`);
+                console.log(`[RESUME] Full resume state:`, JSON.stringify(resumeState));
+                await logToDatabase(jobId, 'info', `Resuming from saved state: page ${startPage}, ${lotsScraped} lots already scraped`, 'scraper');
+            }
+        } else {
+            console.log(`[RESUME CHECK] No resume state found. savedState:`, savedState);
+            if (savedState) {
+                console.log(`[RESUME CHECK] savedState.resumeState:`, savedState.resumeState);
+            }
+        }
+        
+        // Load already seen lots from the file to avoid re-scraping (do this whenever file exists)
+        if (fileHasData) {
+            try {
+                const fileContent = fs.readFileSync(inProgressFile, 'utf-8');
+                const lines = fileContent.split('\n').filter(line => line.trim());
+                for (const line of lines) {
+                    try {
+                        const lotData = JSON.parse(line);
+                        if (lotData.lotnumber) {
+                            seenLots.add(String(lotData.lotnumber)); // Ensure string comparison
+                        }
+                    } catch (e) {
+                        // Skip invalid JSON lines
+                    }
+                }
+                console.log(`[RESUME] Loaded ${seenLots.size} already scraped lots from file: ${Array.from(seenLots).slice(0, 5).join(', ')}...`);
+                // Update lotsScraped count from file if resume state didn't have it
+                if (lotsScraped === 0 && seenLots.size > 0) {
+                    lotsScraped = seenLots.size;
+                    console.log(`[RESUME] Updated lotsScraped count from file: ${lotsScraped}`);
+                }
+                // Set resumeState if we have seen lots (to prevent file clearing)
+                if (!resumeState && seenLots.size > 0) {
+                    resumeState = {
+                        eventId: eventId,
+                        currentPage: 1,
+                        lotsScraped: seenLots.size,
+                        lotNumber: ''
+                    };
+                    console.log(`[RESUME] Created resumeState from file data: ${seenLots.size} lots`);
+                }
+            } catch (fileErr) {
+                console.error(`[RESUME] Failed to load existing lots from file: ${fileErr.message}`);
+            }
+        }
+    }
+    
+    // Create/clear the output file ONLY if NOT resuming (if resuming, we want to append to existing file)
+    if (!resumeState) {
+        try {
+            fs.writeFileSync(inProgressFile, '');
+            console.log(`[FILE] Created output file: ${inProgressFile}`);
+            if (jobId) {
+                await logToDatabase(jobId, 'info', `Output file created: ${inProgressFile}`, 'scraper');
+            }
+        } catch (fileErr) {
+            console.error(`[FILE ERROR] Failed to create output file: ${fileErr.message}`);
+            if (jobId) {
+                await logToDatabase(jobId, 'error', `Failed to create output file: ${fileErr.message}`, 'scraper');
+            }
+        }
+    } else {
+        console.log(`[RESUME] Keeping existing file and appending new lots: ${inProgressFile}`);
+        await logToDatabase(jobId, 'info', `Resuming - will append to existing file: ${inProgressFile}`, 'scraper');
+    }
     
     // Initialize job statistics
     if (jobId) {
-        await logToDatabase(jobId, 'info', `Starting single event scraping for event ${eventId}`, 'scraper');
+        if (resumeState) {
+            await logToDatabase(jobId, 'info', `Resuming single event scraping for event ${eventId} from page ${startPage}`, 'scraper');
+        } else {
+            await logToDatabase(jobId, 'info', `Starting single event scraping for event ${eventId}`, 'scraper');
+        }
         await logToDatabase(jobId, 'info', `Navigating: https://www.numisbids.com/sale/${eventId}`, 'scraper');
         await pool.query(
             `UPDATE scraper_jobs SET current_event_id = $1, total_events = 1, current_event_index = 0 WHERE id = $2`,
@@ -759,19 +1015,112 @@ try {
              ON CONFLICT DO NOTHING`,
             [jobId]
         ).catch(() => {}); // Ignore if already exists
+        
+        // Update statistics with already scraped lots if resuming
+        if (resumeState && lotsScraped > 0) {
+            await updateJobStatistics(jobId, {
+                totalEvents: 1,
+                processedEvents: 0,
+                totalLots: 0,
+                processedLots: lotsScraped,
+                filesCreated: 1,
+                filesCompleted: 0
+            });
+        }
     }
 
-    for (let currentPage = 1; currentPage <= totalPages; currentPage++) {
+    // If resuming, navigate to the resume page first
+    if (resumeState && startPage > 1) {
       const pageUrlBase = await page.evaluate(() => window.location.href.split('?')[0])
-      const pageUrl = `${pageUrlBase}?pg=${currentPage}`
-      log(`Auction ${eventId} — Page ${currentPage}`)
-      await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+      const resumePageUrl = `${pageUrlBase}?pg=${startPage}`
+      console.log(`[RESUME] Navigating to page ${startPage} to resume scraping...`);
+      await logToDatabase(jobId, 'info', `Resuming from page ${startPage}`, 'scraper');
+      await page.goto(resumePageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    }
+    
+    // Debug log before main loop
+    console.log(`[SCRAPE LOOP] About to start main scraping loop: startPage=${startPage}, totalPages=${totalPages}, seenLots.size=${seenLots.size}`);
+    try {
+      const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+      fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [SCRAPE LOOP] Starting: startPage=${startPage}, totalPages=${totalPages}, seenLots=${seenLots.size}, resumeState=${resumeState ? 'yes' : 'no'}\n`);
+    } catch (e) {}
+    
+    // Start from saved page if resuming, otherwise start from page 1
+    for (let currentPage = startPage; currentPage <= totalPages; currentPage++) {
+      // CRITICAL: Check if job is paused or stopped before processing each page
+      if (jobId) {
+        const jobStatus = await checkJobStatus(jobId);
+        if (jobStatus.isStopped) {
+          console.log(`[STOP] Job ${jobId} is stopped. Exiting immediately...`);
+          await logToDatabase(jobId, 'info', `Job stopped at page ${currentPage}, lot ${lotsScraped} scraped`, 'scraper');
+          await browser.close();
+          process.exit(0);
+        }
+        if (jobStatus.isPaused) {
+          console.log(`[PAUSE] Job ${jobId} is paused. Saving state and exiting...`);
+          await logToDatabase(jobId, 'info', `Job paused at page ${currentPage}, lot ${lotsScraped} scraped`, 'scraper');
+          // Save resume state with last processed lot
+          const lastLotNumber = lotsScraped > 0 ? `Last processed: ${lotsScraped} lots` : '';
+          await saveResumeState(jobId, eventId, lastLotNumber, currentPage, lotsScraped);
+          await browser.close();
+          process.exit(0);
+        }
+      }
+      
+      // Only navigate if we're not already on this page (for resume case)
+      if (currentPage !== startPage || !resumeState) {
+        const pageUrlBase = await page.evaluate(() => window.location.href.split('?')[0])
+        const pageUrl = `${pageUrlBase}?pg=${currentPage}`
+        log(`Auction ${eventId} — Page ${currentPage}`)
+        await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+      } else {
+        log(`Auction ${eventId} — Page ${currentPage} (resumed)`)
+      }
 
       const lotHandles = await page.$$('.browse')
+      console.log(`[PAGE ${currentPage}] Found ${lotHandles.length} lot elements on page`);
+      try {
+        const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+        fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [PAGE ${currentPage}] Found ${lotHandles.length} lots, seenLots.size=${seenLots.size}\n`);
+      } catch (e) {}
+      
       for (const lot of lotHandles) {
+        // CRITICAL: Check pause/stop status BEFORE processing each lot
+        if (jobId) {
+          const jobStatus = await checkJobStatus(jobId);
+          if (jobStatus.isStopped) {
+            console.log(`[STOP] Job ${jobId} is stopped. Exiting immediately...`);
+            await logToDatabase(jobId, 'info', `Job stopped at page ${currentPage}, lot ${lotsScraped} scraped`, 'scraper');
+            await browser.close();
+            process.exit(0);
+          }
+          if (jobStatus.isPaused) {
+            console.log(`[PAUSE] Job ${jobId} is paused. Saving state and exiting...`);
+            await logToDatabase(jobId, 'info', `Job paused at page ${currentPage}, lot ${lotsScraped} scraped`, 'scraper');
+            const lastLotNumber = lotsScraped > 0 ? `Last processed: ${lotsScraped} lots` : '';
+            await saveResumeState(jobId, eventId, lastLotNumber, currentPage, lotsScraped);
+            await browser.close();
+            process.exit(0);
+          }
+        }
+        
         try {
           const lotNumber = await lot.$eval('.lot a', el => el.textContent.trim().replace(/^Lot\s+/i, ''))
-          if (seenLots.has(lotNumber)) continue
+          const lotNumberStr = String(lotNumber); // Ensure string for comparison
+          
+          // Skip if already scraped (but log for debugging)
+          if (seenLots.has(lotNumberStr)) {
+            if (resumeState && lotsScraped < 10) {
+              console.log(`[RESUME] Skipping already scraped lot: ${lotNumberStr}`);
+            }
+            continue;
+          }
+          
+          // Log when we start scraping new lots after resume
+          if (resumeState && lotsScraped === resumeState.lotsScraped) {
+            console.log(`[RESUME] Starting to scrape new lots from lot ${lotNumberStr}`);
+            await logToDatabase(jobId, 'info', `Resuming scraping from lot ${lotNumberStr} on page ${currentPage}`, 'scraper');
+          }
 
           const relLotUrl = await lot.$eval('a[href*="/lot/"]', el => el.getAttribute('href'))
           const lotUrl = new URL(relLotUrl, 'https://www.numisbids.com').href
@@ -783,6 +1132,23 @@ try {
           })
           const startingPrice = await lot.$eval('.estimate span', el => el.textContent.trim()).catch(() => '')
           const realizedPrice = await lot.$eval('.realized span', el => el.textContent.trim()).catch(() => '')
+
+          // Check again before opening new page (expensive operation)
+          if (jobId) {
+            const jobStatus = await checkJobStatus(jobId);
+            if (jobStatus.isStopped || jobStatus.isPaused) {
+              if (jobStatus.isStopped) {
+                console.log(`[STOP] Job ${jobId} is stopped. Exiting before opening lot page...`);
+                await logToDatabase(jobId, 'info', `Job stopped before scraping lot ${lotNumber}`, 'scraper');
+              } else {
+                console.log(`[PAUSE] Job ${jobId} is paused. Saving state and exiting...`);
+                await logToDatabase(jobId, 'info', `Job paused before scraping lot ${lotNumber}`, 'scraper');
+                await saveResumeState(jobId, eventId, lotNumber, currentPage, lotsScraped);
+              }
+              await browser.close();
+              process.exit(0);
+            }
+          }
 
           const dpage = await browser.newPage()
           dpage.setDefaultTimeout(30000)
@@ -811,6 +1177,24 @@ try {
 
           await dpage.close()
 
+          // Check pause/stop status after scraping lot data but before writing to file
+          if (jobId) {
+            const jobStatus = await checkJobStatus(jobId);
+            if (jobStatus.isStopped) {
+              console.log(`[STOP] Job ${jobId} is stopped. Exiting before writing lot to file...`);
+              await logToDatabase(jobId, 'info', `Job stopped after scraping lot ${lotNumber} data`, 'scraper');
+              await browser.close();
+              process.exit(0);
+            }
+            if (jobStatus.isPaused) {
+              console.log(`[PAUSE] Job ${jobId} is paused. Saving state and exiting...`);
+              await logToDatabase(jobId, 'info', `Job paused after scraping lot ${lotNumber} data`, 'scraper');
+              await saveResumeState(jobId, eventId, lotNumber, currentPage, lotsScraped);
+              await browser.close();
+              process.exit(0);
+            }
+          }
+
           const lotData = {
             auctionid: String(eventId),
             loturl: lotUrl,
@@ -822,7 +1206,7 @@ try {
             realizedprice: realizedPrice,
             imagepath: details.fullImage || thumbImage,
             fulldescription: details.fullDescription,
-            lotnumber: lotNumber,
+            lotnumber: lotNumberStr,
             shortdescription: lotName,
             lotname: description
           }
@@ -830,26 +1214,70 @@ try {
           // Write lot to file
           try {
             fs.appendFileSync(inProgressFile, JSON.stringify(lotData) + '\n');
-            seenLots.add(lotNumber);
+            seenLots.add(lotNumberStr);
             lotsScraped++;
+            
+            // Log more frequently when resuming to verify it's working
+            if (resumeState) {
+              console.log(`[RESUME] Scraped and wrote lot ${lotNumberStr} (total: ${lotsScraped}, was: ${resumeState.lotsScraped})`);
+              if (lotsScraped <= resumeState.lotsScraped + 5) {
+                await logToDatabase(jobId, 'info', `Resumed scraping: lot ${lotNumberStr} written (${lotsScraped} total)`, 'scraper');
+              }
+            }
+            
             // Log every 10th lot to reduce console spam
-            if (lotsScraped % 10 === 0 || lotsScraped <= 5) {
+            if (!resumeState && (lotsScraped % 10 === 0 || lotsScraped <= 5)) {
               console.log(`[FILE] Written ${lotsScraped} lots to ${inProgressFile}`);
             }
           } catch (fileErr) {
-            console.error(`[FILE ERROR] Failed to write lot ${lotNumber}: ${fileErr.message}`);
+            console.error(`[FILE ERROR] Failed to write lot ${lotNumberStr}: ${fileErr.message}`);
             if (jobId) {
-              await logToDatabase(jobId, 'error', `Failed to write lot ${lotNumber} to file: ${fileErr.message}`, 'scraper');
+              await logToDatabase(jobId, 'error', `Failed to write lot ${lotNumberStr} to file: ${fileErr.message}`, 'scraper');
             }
             // Continue even if file write fails
-            seenLots.add(lotNumber);
+            seenLots.add(lotNumberStr);
             lotsScraped++;
+          }
+          
+          // CRITICAL: Check if job is paused or stopped BEFORE inserting into database
+          // This is the most important check - we don't want to insert if paused/stopped
+          if (jobId) {
+            const jobStatus = await checkJobStatus(jobId);
+            if (jobStatus.isStopped) {
+              console.log(`[STOP] Job ${jobId} is stopped. Stopping before database insert. Exiting immediately...`);
+              await logToDatabase(jobId, 'info', `Job stopped before inserting lot ${lotNumberStr} (${lotsScraped} lots scraped)`, 'scraper');
+              await browser.close();
+              process.exit(0);
+            }
+            if (jobStatus.isPaused) {
+              console.log(`[PAUSE] Job ${jobId} is paused. Stopping before database insert. Saving state and exiting...`);
+              await logToDatabase(jobId, 'info', `Job paused before inserting lot ${lotNumberStr} (${lotsScraped} lots scraped)`, 'scraper');
+              await saveResumeState(jobId, eventId, lotNumberStr, currentPage, lotsScraped);
+              await browser.close();
+              process.exit(0);
+            }
           }
           
           // Insert lot into database in real-time (if insert functions available)
           let lotsInserted = 0;
           if (jobId && insertLotFunctions && insertLotFunctions.processLotInRealTime) {
             try {
+              // Check pause/stop status again right before insert (double-check)
+              const jobStatus = await checkJobStatus(jobId);
+              if (jobStatus.isStopped) {
+                console.log(`[STOP] Job ${jobId} is stopped. Stopping database insert. Exiting immediately...`);
+                await logToDatabase(jobId, 'info', `Job stopped before inserting lot ${lotNumberStr} (${lotsScraped} lots scraped)`, 'scraper');
+                await browser.close();
+                process.exit(0);
+              }
+              if (jobStatus.isPaused) {
+                console.log(`[PAUSE] Job ${jobId} is paused. Stopping database insert. Saving state and exiting...`);
+                await logToDatabase(jobId, 'info', `Job paused before inserting lot ${lotNumberStr} (${lotsScraped} lots scraped)`, 'scraper');
+                await saveResumeState(jobId, eventId, lotNumberStr, currentPage, lotsScraped);
+                await browser.close();
+                process.exit(0);
+              }
+              
               // Prepare event data for insertion
               const eventData = {
                 auctionid: String(eventId),
@@ -864,13 +1292,13 @@ try {
               }
             } catch (insertErr) {
               console.warn(`[Insert Error] Lot ${lotNumber}: ${insertErr.message}`);
-              await logToDatabase(jobId, 'warning', `Failed to insert lot ${lotNumber}: ${insertErr.message}`, 'scraper');
+              await logToDatabase(jobId, 'warning', `Failed to insert lot ${lotNumberStr}: ${insertErr.message}`, 'scraper');
             }
           }
           
           // Update job statistics in real-time
           if (jobId) {
-            await updateCurrentLot(jobId, eventId, lotNumber);
+            await updateCurrentLot(jobId, eventId, lotNumberStr);
             
             // Update statistics - processed_lots represents scraped lots (for monitoring)
             // Update after EVERY lot for real-time monitoring
@@ -892,21 +1320,28 @@ try {
             }
             
             // Log every lot for real-time monitoring (matches command line output format)
-            await logToDatabase(jobId, 'info', `Scraped lot ${lotNumber} (${lotsScraped} scraped, ${lotsInserted > 0 ? 'inserted' : 'pending insert'})`, 'scraper', {
+            await logToDatabase(jobId, 'info', `Scraped lot ${lotNumberStr} (${lotsScraped} scraped, ${lotsInserted > 0 ? 'inserted' : 'pending insert'})`, 'scraper', {
               eventId: eventId,
-              lotNumber: lotNumber,
+              lotNumber: lotNumberStr,
               lotsScraped: lotsScraped,
               lotsInserted: lotsInserted
             });
           }
           
-          log(`Scraped lot ${lotNumber} (${lotsScraped} scraped, ${lotsInserted > 0 ? 'inserted' : 'pending insert'})`)
+          log(`Scraped lot ${lotNumberStr} (${lotsScraped} scraped, ${lotsInserted > 0 ? 'inserted' : 'pending insert'})`)
         } catch (err) {
           console.warn(`Lot error: ${err.message}`)
         }
       }
     }
 
+    // Debug log after main loop
+    console.log(`[SCRAPE LOOP] Main loop finished. lotsScraped=${lotsScraped}`);
+    try {
+      const debugLogFile = path.join(__dirname, 'scrape_debug.log');
+      fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [SCRAPE LOOP] Finished: lotsScraped=${lotsScraped}\n`);
+    } catch (e) {}
+    
     const lines = fs.readFileSync(inProgressFile, 'utf-8')
       .split('\n').filter(Boolean).map(l => JSON.parse(l))
     fs.writeFileSync(finalFile, JSON.stringify(lines, null, 2))
