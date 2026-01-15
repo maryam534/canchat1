@@ -4,7 +4,6 @@
 --->
 
 <cfmodule template="layout.cfm" title="Lot Scraping" currentPage="lots">
-
 <div class="fade-in">
     <!-- Header -->
     <div class="bg-white rounded-xl shadow-sm p-6 mb-6">
