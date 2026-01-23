@@ -1,13 +1,29 @@
+// Immediate console logging (before any requires that might fail)
+console.log('[SCRIPT START] Initializing scraper...');
+console.log('[SCRIPT START] Process args:', process.argv.slice(2));
+
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
-const pool = require('./dbConfig');
+
+// Try to load database config with error handling
+let pool = null;
+try {
+    pool = require('./dbConfig');
+    console.log('[SCRIPT START] Database config loaded successfully');
+} catch (dbErr) {
+    console.error('[SCRIPT START] ❌ Failed to load database config:', dbErr.message);
+    console.error('[SCRIPT START] Stack:', dbErr.stack);
+    // Continue without database - will log errors later
+}
+
 // Import real-time insertion functions
 let insertLotFunctions = null;
 try {
   insertLotFunctions = require('./insert_lots_into_db');
+  console.log('[SCRIPT START] Insert functions loaded successfully');
 } catch (err) {
-  console.warn('[Warning] Could not load insert_lots_into_db module. Real-time insertion disabled.');
+  console.warn('[SCRIPT START] [Warning] Could not load insert_lots_into_db module. Real-time insertion disabled.');
 }
 
 // Enhanced logging function
@@ -29,7 +45,6 @@ process.on('SIGTERM', () => {
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-let maxSales = null;
 let targetEventId = null;
 let outputFile = null;
 let resume = false;
@@ -38,12 +53,7 @@ let jobId = null;
 
 // Parse arguments
 for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith('--max-sales=')) {
-        maxSales = parseInt(args[i].split('=')[1]);
-    } else if (args[i] === '--max-sales' && i + 1 < args.length) {
-        maxSales = parseInt(args[i + 1]);
-        i++;
-    } else if (args[i].startsWith('--event-id=')) {
+    if (args[i].startsWith('--event-id=')) {
         targetEventId = args[i].split('=')[1];
     } else if (args[i] === '--event-id' && i + 1 < args.length) {
         targetEventId = args[i + 1];
@@ -70,7 +80,6 @@ for (let i = 0; i < args.length; i++) {
 Usage: node scrap_all_auctions_lots_data.js [options]
 
 Options:
-  --max-sales <number>    Limit the number of sales to process (for testing)
   --event-id <id>         Process only a specific event ID
   --output-file <name>    Specify output file name
   --job-id <id>           Database job ID for status tracking
@@ -79,11 +88,10 @@ Options:
   --help, -h              Show this help message
 
 Examples:
-  node scrap_all_auctions_lots_data.js --max-sales 2
   node scrap_all_auctions_lots_data.js --event-id 9537
   node scrap_all_auctions_lots_data.js --resume --last-lot 100
   node scrap_all_auctions_lots_data.js --output-file "auction_9537_lots.jsonl"
-  node scrap_all_auctions_lots_data.js --job-id 5 --max-sales 2
+  node scrap_all_auctions_lots_data.js --job-id 5
         `);
         process.exit(0);
     }
@@ -91,16 +99,19 @@ Examples:
 
 log(`🚀 Starting scraper with options:`);
 if (jobId) log(`   Job ID: ${jobId}`);
-if (maxSales) log(`   Max sales: ${maxSales}`);
 if (targetEventId) log(`   Target event ID: ${targetEventId}`);
 if (outputFile) log(`   Output file: ${outputFile}`);
 if (resume) log(`   Resume mode: enabled`);
 if (lastLot) log(`   Resume from lot: ${lastLot}`);
-if (!maxSales && !targetEventId) log(`   Processing all available sales`);
+if (!targetEventId) log(`   Processing all available sales`);
 
 // Database status tracking functions
 async function logToDatabase(jobId, level, message, source = 'scraper', metadata = {}) {
     if (!jobId) return;
+    if (!pool) {
+        console.warn(`[DB LOG SKIP] ${level.toUpperCase()}: ${message} (database not available)`);
+        return;
+    }
     try {
         await pool.query(
             `INSERT INTO scrape_logs (job_id, log_level, message, source, metadata)
@@ -113,7 +124,7 @@ async function logToDatabase(jobId, level, message, source = 'scraper', metadata
 }
 
 async function updateJobStatistics(jobId, stats) {
-    if (!jobId) return;
+    if (!jobId || !pool) return;
     try {
         // Check if statistics record exists
         const checkResult = await pool.query(
@@ -142,7 +153,7 @@ async function updateJobStatistics(jobId, stats) {
                  statsData.processed_lots, statsData.files_created, statsData.files_completed, jobId]
             );
         } else {
-            // Insert new record
+           
             await pool.query(
                 `INSERT INTO job_statistics (job_id, total_events, processed_events, total_lots, processed_lots, files_created, files_completed, start_time, last_update)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
@@ -157,22 +168,40 @@ async function updateJobStatistics(jobId, stats) {
 
 // -------- Pause/Resume State Management --------
 /**
- * Check if job is paused
+ * Check if job is paused or stopped
  * @param {number} jobId - Job ID
- * @returns {Promise<boolean>} - True if job is paused
+ * @returns {Promise<{isPaused: boolean, isStopped: boolean, status: string}>} - Status object
  */
-async function checkPauseStatus(jobId) {
-    if (!jobId) return false;
+async function checkJobStatus(jobId) {
+    if (!jobId || !pool) return {isPaused: false, isStopped: false, status: ''};
     try {
         const result = await pool.query(
             `SELECT status FROM scraper_jobs WHERE id = $1`,
             [jobId]
         );
-        return result.rows.length > 0 && result.rows[0].status === 'paused';
+        if (result.rows.length === 0) {
+            return {isPaused: false, isStopped: false, status: ''};
+        }
+        const status = result.rows[0].status || '';
+        return {
+            isPaused: status === 'paused',
+            isStopped: status === 'stopped',
+            status: status
+        };
     } catch (err) {
-        console.error(`[Pause Check Error] ${err.message}`);
-        return false;
+        console.error(`[Job Status Check Error] ${err.message}`);
+        return {isPaused: false, isStopped: false, status: ''};
     }
+}
+
+/**
+ * Check if job is paused (backward compatibility)
+ * @param {number} jobId - Job ID
+ * @returns {Promise<boolean>} - True if job is paused
+ */
+async function checkPauseStatus(jobId) {
+    const status = await checkJobStatus(jobId);
+    return status.isPaused;
 }
 
 /**
@@ -184,7 +213,7 @@ async function checkPauseStatus(jobId) {
  * @param {Object} additionalState - Additional state to save
  */
 async function saveResumeState(jobId, eventId, lotNumber, eventIndex, additionalState = {}) {
-    if (!jobId) return;
+    if (!jobId || !pool) return;
     try {
         const resumeState = {
             eventId,
@@ -214,7 +243,7 @@ async function saveResumeState(jobId, eventId, lotNumber, eventIndex, additional
  * @returns {Promise<Object|null>} - Resume state object or null
  */
 async function getResumeState(jobId) {
-    if (!jobId) return null;
+    if (!jobId || !pool) return null;
     try {
         const result = await pool.query(
             `SELECT resume_state, current_event_id, current_lot_number, current_event_index, total_events
@@ -246,7 +275,7 @@ async function getResumeState(jobId) {
  * @param {number} eventIndex - Current event index
  */
 async function updateCurrentEvent(jobId, eventId, eventIndex) {
-    if (!jobId) return;
+    if (!jobId || !pool) return;
     try {
         await pool.query(
             `UPDATE scraper_jobs 
@@ -260,7 +289,7 @@ async function updateCurrentEvent(jobId, eventId, eventIndex) {
 }
 
 async function updateJobStatus(jobId, status, errorMessage = null) {
-    if (!jobId) return;
+    if (!jobId || !pool) return;
     try {
         if (status === 'completed') {
             await pool.query(
@@ -280,6 +309,59 @@ async function updateJobStatus(jobId, status, errorMessage = null) {
         }
     } catch (err) {
         console.error(`[DB Status Error] ${err.message}`);
+    }
+}
+
+/**
+ * Check if auction is already inserted in database
+ * Checks sales table, uploaded_files table, and lots table
+ * @param {string} auctionId - Auction ID to check
+ * @returns {Promise<boolean>} - True if auction is already inserted
+ */
+async function isAuctionAlreadyInserted(auctionId) {
+    if (!auctionId || !pool) return false;
+    try {
+        // Check 1: sales table - check if sale exists with this auctionId
+        const salesCheck = await pool.query(
+            `SELECT s.sale_pk 
+             FROM sales s 
+             JOIN auction_houses ah ON s.sale_firm_fk = ah.firm_pk 
+             WHERE ah.firm_id = $1 AND s.sale_no = $1 
+             LIMIT 1`,
+            [auctionId]
+        );
+        if (salesCheck.rows.length > 0) {
+            return true;
+        }
+
+        // Check 2: uploaded_files table - check if file is marked as completed
+        const fileName = `auction_${auctionId}_lots.json`;
+        const uploadedCheck = await pool.query(
+            `SELECT status FROM uploaded_files WHERE file_name = $1 AND status = 'Completed' LIMIT 1`,
+            [fileName]
+        );
+        if (uploadedCheck.rows.length > 0) {
+            return true;
+        }
+
+        // Check 3: lots table - check if lots exist for this sale
+        const lotsCheck = await pool.query(
+            `SELECT COUNT(*) as lot_count 
+             FROM lots l 
+             JOIN sales s ON l.lot_sale_fk = s.sale_pk 
+             JOIN auction_houses ah ON s.sale_firm_fk = ah.firm_pk 
+             WHERE ah.firm_id = $1 AND s.sale_no = $1`,
+            [auctionId]
+        );
+        if (lotsCheck.rows.length > 0 && parseInt(lotsCheck.rows[0].lot_count) > 0) {
+            return true;
+        }
+
+        return false;
+    } catch (err) {
+        console.error(`[DB Check Error] ${err.message}`);
+        // On error, return false to allow processing (fail-safe)
+        return false;
     }
 }
 
@@ -324,26 +406,70 @@ if (!fs.existsSync(finalFolder)) {
     log(`Created final folder: ${finalFolder}`);
 }
 
+// Add process-level error handlers
+process.on('uncaughtException', (err) => {
+    console.error('[UNCAUGHT EXCEPTION]', err.message);
+    console.error('[UNCAUGHT EXCEPTION] Stack:', err.stack);
+    if (jobId && pool) {
+        // Try to log to database, but don't wait (might hang)
+        logToDatabase(jobId, 'error', `Uncaught exception: ${err.message}`, 'scraper', { error: err.message, stack: err.stack }).catch(() => {});
+    }
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[UNHANDLED REJECTION]', reason);
+    if (jobId && pool) {
+        logToDatabase(jobId, 'error', `Unhandled rejection: ${reason}`, 'scraper', { error: String(reason) }).catch(() => {});
+    }
+});
+
 (async () => {
     let browser;
     try {
+        console.log('[MAIN] Entering main async function...');
+        console.log('[MAIN] Job ID:', jobId);
+        console.log('[MAIN] Pool available:', !!pool);
+        
         // Initialize job if jobId is provided
+        let resumeState = null;
+        let startEventIndex = 0;
+        
         if (jobId) {
+            console.log('[MAIN] Attempting to log to database...');
+            // Immediately log that script started
+            await logToDatabase(jobId, 'info', 'Script process started - initializing...', 'scraper');
+            console.log('[MAIN] Database log successful');
+            
+            // Check for resume state from database
+            const stateData = await getResumeState(jobId);
+            if (stateData && stateData.resumeState) {
+                resumeState = stateData.resumeState;
+                startEventIndex = resumeState.eventIndex || 0;
+                log(`📋 Resuming from saved state: event index ${startEventIndex}, eventId: ${resumeState.eventId || 'N/A'}`, 'info');
+                await logToDatabase(jobId, 'info', `Resuming from saved state: event index ${startEventIndex}`, 'scraper', resumeState);
+            }
+            
             await updateJobStatus(jobId, 'running');
-            await logToDatabase(jobId, 'info', 'Scraper started', 'scraper');
+            await logToDatabase(jobId, 'info', resumeState ? 'Scraper resumed' : 'Scraper started', 'scraper');
+            await logToDatabase(jobId, 'info', 'Starting browser and navigating to NumisBids...', 'scraper');
         }
         const executablePath = (process.env.CHROME_PATH || '').trim() ? process.env.CHROME_PATH : undefined;
+        if (jobId) await logToDatabase(jobId, 'info', 'Launching browser...', 'scraper');
         browser = await puppeteer.launch({ 
             headless: true,
             executablePath,
             args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
+        if (jobId) await logToDatabase(jobId, 'info', 'Browser launched successfully', 'scraper');
 
         const mainPage = await browser.newPage();
         await mainPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
        
         log('Navigating to NumisBids homepage...');
+        if (jobId) await logToDatabase(jobId, 'info', 'Navigating to NumisBids homepage...', 'scraper');
         await mainPage.goto('https://www.numisbids.com/', { timeout: 60000 });
+        if (jobId) await logToDatabase(jobId, 'info', 'Homepage loaded, extracting event links...', 'scraper');
 
         const eventLinks = await mainPage.$$eval(
             'td.firmcell a[href^="/event/"], td.firmcell-e a[href^="/event/"]',
@@ -351,14 +477,21 @@ if (!fs.existsSync(finalFolder)) {
         );
 
         log(`Found ${eventLinks.length} event links on homepage`);
+        if (jobId) await logToDatabase(jobId, 'info', `Found ${eventLinks.length} event links on homepage`, 'scraper', { eventLinksCount: eventLinks.length });
         console.log(eventLinks);
         
         const saleLinks = [];
 
         // Step 2: Loop through each event link
+        if (jobId) await logToDatabase(jobId, 'info', `Processing ${eventLinks.length} event links to find sale URLs...`, 'scraper');
+        let processedCount = 0;
         for (const eventUrl of eventLinks) {
             try {
-                console.log(`🔄 Processing: ${eventUrl}`);
+                processedCount++;
+                if (jobId && processedCount % 10 === 0) {
+                    await logToDatabase(jobId, 'info', `Processing event links: ${processedCount}/${eventLinks.length}...`, 'scraper', { processed: processedCount, total: eventLinks.length });
+                }
+                console.log(`🔄 Processing: ${eventUrl} (${processedCount}/${eventLinks.length})`);
 
                 // Go to event page (which usually redirects to sale page)
                 const eventPage = await browser.newPage();
@@ -387,9 +520,14 @@ if (!fs.existsSync(finalFolder)) {
         }
 
         console.log(`🎯 Total sale links found: ${saleLinks.length}`);
+        if (jobId) await logToDatabase(jobId, 'info', `Found ${saleLinks.length} sale links from ${eventLinks.length} event links`, 'scraper', { saleLinksCount: saleLinks.length, eventLinksCount: eventLinks.length });
         console.log(saleLinks);
 
         let filteredEventLinks = [];
+
+        // Log mode detection
+        console.log(`[MODE] targetEventId: ${targetEventId || 'null/empty'}, runMode: All Events`);
+        if (jobId) await logToDatabase(jobId, 'info', `Mode: All Events (targetEventId: ${targetEventId || 'none'})`, 'scraper');
 
         if (targetEventId) {
             const eventMatch = eventLinks.filter(link => link.includes(`/event/${targetEventId}`));
@@ -411,25 +549,59 @@ if (!fs.existsSync(finalFolder)) {
                 // Try both URLs in order
                 filteredEventLinks = [directEventUrl, directSaleUrl];
             }
+        } else {
+            // All events mode - use all sale links
+            filteredEventLinks = saleLinks;
+            log(`📋 Processing all ${saleLinks.length} auctions from homepage`, 'info');
         }
 
         console.log(`filteredEventLinks ${filteredEventLinks}` );
-        // Apply max sales limit
-        if (maxSales && filteredEventLinks.length > maxSales) {
-            filteredEventLinks = filteredEventLinks.slice(0, maxSales);
-            log(`Limiting to ${maxSales} sales for testing`);
-        }
 
         // Update statistics after filtering
         if (jobId) {
             jobStats.totalEvents = filteredEventLinks.length > 0 ? filteredEventLinks.length : eventLinks.length;
             await updateJobStatistics(jobId, jobStats);
             await logToDatabase(jobId, 'info', `Found ${eventLinks.length} event links, ${saleLinks.length} sale links, ${filteredEventLinks.length} to process`, 'scraper');
+            // Update current event to show we're in discovery phase
+            await pool.query(
+                `UPDATE scraper_jobs SET current_event_id = 'Discovering auctions...', current_event_index = 0 WHERE id = $1`,
+                [jobId]
+            );
         }
 
         const newEventObjects = [];
-        // for (const eventLink of filteredEventLinks) {
+        if (jobId) await logToDatabase(jobId, 'info', `Extracting auction details from ${filteredEventLinks.length} sale links...`, 'scraper', { totalLinks: filteredEventLinks.length });
+        
+        let extractedCount = 0;
+        const startTime = Date.now();
+        
         for (const eventLink of filteredEventLinks) {
+            extractedCount++;
+            
+            // Update progress more frequently (every 2 auctions instead of 5)
+            if (jobId) {
+                if (extractedCount % 2 === 0 || extractedCount === 1) {
+                    const elapsed = Math.round((Date.now() - startTime) / 1000);
+                    const avgTimePerAuction = elapsed / extractedCount;
+                    const remaining = Math.round(avgTimePerAuction * (filteredEventLinks.length - extractedCount));
+                    await logToDatabase(jobId, 'info', `Extracting auction details: ${extractedCount}/${filteredEventLinks.length} (est. ${remaining}s remaining)...`, 'scraper', { 
+                        extracted: extractedCount, 
+                        total: filteredEventLinks.length,
+                        elapsed: elapsed,
+                        remaining: remaining
+                    });
+                }
+                
+                // Update current event ID to show which auction is being processed
+                const linkMatch = eventLink.match(/\/sale\/(\d+)/);
+                if (linkMatch) {
+                    await pool.query(
+                        `UPDATE scraper_jobs SET current_event_id = $1 WHERE id = $2`,
+                        [`Extracting details: ${extractedCount}/${filteredEventLinks.length} (Auction ${linkMatch[1]})`, jobId]
+                    );
+                }
+            }
+            
             const eventPage = await browser.newPage();
             try {
                 await eventPage.goto(eventLink, { waitUntil: 'domcontentloaded' });
@@ -441,20 +613,19 @@ if (!fs.existsSync(finalFolder)) {
                     const eventId = match[1];
                     const saleUrl = `https://www.numisbids.com/sale/${eventId}`;
                     const auctionName = await eventPage.$eval('.text .name', el => el.textContent.trim()).catch(() => 'Unknown');
+                    
                     // sale info
                     const saleInfo = await eventPage.$eval('.salestatus', (el) => {
                         const logoImg = el.querySelector('img');
                         const logoSrc = logoImg?.getAttribute('src') || '';
                         const logoFullUrl = logoSrc.startsWith('//') ? `https:${logoSrc}` : logoSrc;
 
-                        // Look inside the `.text` section
                         const saleTextEl = el.querySelector('.text');
                         let saleNumber = null;
 
                         if (saleTextEl) {
-                            // Try to find <b> tag and extract number from text
                             const boldText = saleTextEl.querySelector('b')?.innerText || '';
-                            const match = boldText.match(/(\d+)$/); // Extract the number at the end
+                            const match = boldText.match(/(\d+)$/);
                             saleNumber = match ? match[1] : null;
                         }
 
@@ -464,102 +635,127 @@ if (!fs.existsSync(finalFolder)) {
                         };
                     });
 
-                    // sale name 
-                    const saleInfoHref = await eventPage.$eval('a.saleinfopopup.saleinfo', el => el.getAttribute('href'));
-                    const saleInfoUrl = `https://www.numisbids.com${saleInfoHref}`;
-                    const saleInfoPage = await browser.newPage();
-                    await saleInfoPage.goto(saleInfoUrl, { timeout: 60000 });
-
-                    const extractedSaleName = await saleInfoPage.evaluate(() => {
-                        const headers = Array.from(document.querySelectorAll('div[style*="background: lightgray"]'));
-
-                        for (const header of headers) {
-                            const title = header.innerText.trim();
-                            if (title.includes('Auction Location, Timetable')) {
-                                // Get the next .indent div after this header
-                                const indentDiv = header.nextElementSibling;
-                                if (indentDiv && indentDiv.classList.contains('indent')) {
-                                    const firstP = indentDiv.querySelector('p');
-                                    if (firstP) {
-                                        const firstLine = firstP.innerText.split('\n')[0].trim();
-                                        return firstLine;
+                    // sale name - use shorter timeout and better error handling
+                    const saleInfoHref = await eventPage.$eval('a.saleinfopopup.saleinfo', el => el.getAttribute('href')).catch(() => null);
+                    let extractedSaleName = 'Unknown Sale Name';
+                    
+                    if (saleInfoHref) {
+                        const saleInfoUrl = `https://www.numisbids.com${saleInfoHref}`;
+                        const saleInfoPage = await browser.newPage();
+                        try {
+                            await saleInfoPage.goto(saleInfoUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                            extractedSaleName = await saleInfoPage.evaluate(() => {
+                                const headers = Array.from(document.querySelectorAll('div[style*="background: lightgray"]'));
+                                for (const header of headers) {
+                                    const title = header.innerText.trim();
+                                    if (title.includes('Auction Location, Timetable')) {
+                                        const indentDiv = header.nextElementSibling;
+                                        if (indentDiv && indentDiv.classList.contains('indent')) {
+                                            const firstP = indentDiv.querySelector('p');
+                                            if (firstP) {
+                                                return firstP.innerText.split('\n')[0].trim();
+                                            }
+                                        }
                                     }
                                 }
+                                return 'Unknown Sale Name';
+                            });
+                        } catch (err) {
+                            console.warn(`Failed to extract sale name for ${eventId}: ${err.message}`);
+                            if (jobId) {
+                                await logToDatabase(jobId, 'warning', `Failed to extract sale name for auction ${eventId}: ${err.message}`, 'scraper');
                             }
+                        } finally {
+                            await saleInfoPage.close();
                         }
-
-                        return 'Unknown Sale Name';
-                    });
-
-                    // contact info 
-                    const firmHref = await eventPage.$eval('.salestatus a.firminfopopup', el => el.getAttribute('href'));
-                    const firmUrl = `https://www.numisbids.com${firmHref}`;
-                    const firmPage = await browser.newPage();
-                    await firmPage.goto(firmUrl, { timeout: 60000 });
-
-                    const contactDetails = await firmPage.$eval('.indent', el => el.innerText.trim());
-                    const contactHtml = await firmPage.$eval('.indent', el => el.innerHTML);
-                    
-                    // Split lines
-                    const lines = contactDetails.split('\n').map(line => line.trim()).filter(Boolean);
-
-                    let phone = '';
-                    let fax = '';
-                    let tollFree = '';
-                    let email = '';
-                    let website = '';
-
-                    // Extract from text lines
-                    for (const line of lines) {
-                    const lowerLine = line.toLowerCase();
-
-                    if (!phone && /(ph|phone|tel|mobile|call)/.test(lowerLine)) phone = line;
-                    if (!fax && /fx|fax/.test(lowerLine)) fax = line;
-                    if (!tollFree && lowerLine.includes('toll')) tollFree = line;
-                    if (!email && line.includes('@')) email = line;
-                    if (!website && line.includes('http')) website = line;
                     }
 
-                    // If website not found from text, try extracting from <a href>
-                    if (!website) {
-                    const match = contactHtml.match(/<a[^>]*href=["'](https?:\/\/[^"']+)["']/i);
-                    if (match) website = match[1];
-                    }
-
-                    // Build contact object
-                    const contact = {
-                    firmName: lines[0] || '',
-                    address: lines.slice(1, 3).join(', '),
-                    phone,
-                    fax,
-                    tollFree,
-                    email,
-                    website
+                    // contact info - use shorter timeout and better error handling
+                    const firmHref = await eventPage.$eval('.salestatus a.firminfopopup', el => el.getAttribute('href')).catch(() => null);
+                    let contact = {
+                        firmName: '',
+                        address: '',
+                        phone: '',
+                        fax: '',
+                        tollFree: '',
+                        email: '',
+                        website: ''
                     };
+                    
+                    if (firmHref) {
+                        const firmUrl = `https://www.numisbids.com${firmHref}`;
+                        const firmPage = await browser.newPage();
+                        try {
+                            await firmPage.goto(firmUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                            const contactDetails = await firmPage.$eval('.indent', el => el.innerText.trim()).catch(() => '');
+                            const contactHtml = await firmPage.$eval('.indent', el => el.innerHTML).catch(() => '');
+                            
+                            const lines = contactDetails.split('\n').map(line => line.trim()).filter(Boolean);
+
+                            for (const line of lines) {
+                                const lowerLine = line.toLowerCase();
+                                if (!contact.phone && /(ph|phone|tel|mobile|call)/.test(lowerLine)) contact.phone = line;
+                                if (!contact.fax && /fx|fax/.test(lowerLine)) contact.fax = line;
+                                if (!contact.tollFree && lowerLine.includes('toll')) contact.tollFree = line;
+                                if (!contact.email && line.includes('@')) contact.email = line;
+                                if (!contact.website && line.includes('http')) contact.website = line;
+                            }
+
+                            if (!contact.website) {
+                                const match = contactHtml.match(/<a[^>]*href=["'](https?:\/\/[^"']+)["']/i);
+                                if (match) contact.website = match[1];
+                            }
+
+                            contact.firmName = lines[0] || '';
+                            contact.address = lines.slice(1, 3).join(', ');
+                        } catch (err) {
+                            console.warn(`Failed to extract contact info for ${eventId}: ${err.message}`);
+                            if (jobId) {
+                                await logToDatabase(jobId, 'warning', `Failed to extract contact info for auction ${eventId}: ${err.message}`, 'scraper');
+                            }
+                        } finally {
+                            await firmPage.close();
+                        }
+                    }
 
                     // Add to new event object
                     const newObj = {
-                    number: newEventObjects.length + 1,
-                    eventId,
-                    eventUrl: saleUrl,
-                    eventName: auctionName,
-                    extractedSaleName,
-                    contact,
-                    saleInfo
+                        number: newEventObjects.length + 1,
+                        eventId,
+                        eventUrl: saleUrl,
+                        eventName: auctionName,
+                        extractedSaleName,
+                        contact,
+                        saleInfo
                     };
 
                     newEventObjects.push(newObj);
                     console.log(`✅ ${newEventObjects.length} Found event ID: ${eventId} → Name : ${auctionName} → Url : ${saleUrl}`);
                 }
             } catch (err) {
-            console.warn(`❌ Failed to process ${eventLink}: ${err.message}`);
+                console.warn(`❌ Failed to process ${eventLink}: ${err.message}`);
+                if (jobId) {
+                    await logToDatabase(jobId, 'warning', `Failed to process ${eventLink}: ${err.message}`, 'scraper');
+                }
             } finally {
-            await eventPage.close();
+                await eventPage.close();
             }
         }
 
         fs.writeFileSync(eventIdsFile, JSON.stringify(newEventObjects, null, 2));
         console.log(`\n✅ Total new event IDs saved: ${newEventObjects.length}\n`);
+        if (jobId) await logToDatabase(jobId, 'info', `Extracted ${newEventObjects.length} auction details, saved to eventIds.json`, 'scraper', { totalAuctions: newEventObjects.length });
+
+        // Validate that we have events to process
+        if (newEventObjects.length === 0) {
+            log('⚠️ No events to process after extraction. Exiting.', 'warning');
+            if (jobId) {
+                await logToDatabase(jobId, 'warning', 'No events to process after extraction', 'scraper');
+                await updateJobStatus(jobId, 'completed');
+            }
+            await browser.close();
+            process.exit(0);
+        }
 
         // Get total events count for progress tracking
         const totalEventsCount = newEventObjects.length;
@@ -568,23 +764,144 @@ if (!fs.existsSync(finalFolder)) {
                 `UPDATE scraper_jobs SET total_events = $1 WHERE id = $2`,
                 [totalEventsCount, jobId]
             );
+            await logToDatabase(jobId, 'info', `Ready to process ${totalEventsCount} auctions`, 'scraper', { totalEvents: totalEventsCount });
         }
 
-        for (let eventIndex = 0; eventIndex < newEventObjects.length; eventIndex++) {
-            const { eventId: auctionId, contact, saleInfo, extractedSaleName, eventName: auctionName } = newEventObjects[eventIndex];
+        // Start from resume state if available, otherwise start from beginning
+        let startIndex = resumeState ? (resumeState.eventIndex || 0) : 0;
+        
+        // Check if there are any in-progress files that need to be completed first
+        // This ensures we complete partially scraped auctions before moving to new ones
+        log('🔍 Checking for incomplete auctions to complete first...', 'info');
+        if (jobId) await logToDatabase(jobId, 'info', 'Checking for incomplete auctions to complete first...', 'scraper');
+        for (let checkIndex = 0; checkIndex < newEventObjects.length; checkIndex++) {
+            const { eventId: checkAuctionId } = newEventObjects[checkIndex];
+            const checkInProgressFile = path.join(inProgressFolder, `auction_${checkAuctionId}_lots.jsonl`);
+            const checkFinalFile = path.join(finalFolder, `auction_${checkAuctionId}_lots.json`);
+            
+            // If there's an in-progress file but no final file, start from this auction
+            // Don't check database here - if in-progress file exists, it needs to be completed
+            if (fs.existsSync(checkInProgressFile) && !fs.existsSync(checkFinalFile)) {
+                startIndex = checkIndex;
+                log(`📋 Found in-progress file for auction ${checkAuctionId}, will complete it first (starting from index ${startIndex})`, 'info');
+                if (jobId) {
+                    await logToDatabase(jobId, 'info', `Found in-progress auction ${checkAuctionId}, will complete it first`, 'scraper', { auctionId: checkAuctionId, startIndex });
+                }
+                break; // Found the first incomplete auction, start from here
+            }
+        }
+        
+        log(`🚀 Starting from event index ${startIndex} (total events: ${newEventObjects.length})`, 'info');
+        if (jobId) {
+            await logToDatabase(jobId, 'info', `Starting processing from event index ${startIndex} of ${newEventObjects.length}`, 'scraper', { startIndex, totalEvents: newEventObjects.length });
+            // Update to show we're ready to start scraping
+            if (newEventObjects.length > 0 && startIndex < newEventObjects.length) {
+                const firstAuction = newEventObjects[startIndex];
+                await pool.query(
+                    `UPDATE scraper_jobs SET current_event_id = $1, current_event_index = $2 WHERE id = $3`,
+                    [firstAuction.eventId || 'Starting...', startIndex, jobId]
+                );
+            }
+        }
+        
+        // Log that we're about to start the main processing loop
+        log(`📊 Beginning main processing loop for ${newEventObjects.length - startIndex} auctions...`, 'info');
+        if (jobId) await logToDatabase(jobId, 'info', `Beginning main processing loop for ${newEventObjects.length - startIndex} auctions`, 'scraper', { remainingAuctions: newEventObjects.length - startIndex });
+        
+        for (let eventIndex = startIndex; eventIndex < newEventObjects.length; eventIndex++) {
+            // CRITICAL: Check if job is paused or stopped before processing each event
+            if (jobId) {
+                const jobStatus = await checkJobStatus(jobId);
+                if (jobStatus.isStopped) {
+                    log(`Job stopped. Exiting at event index ${eventIndex}`, 'warning');
+                    await logToDatabase(jobId, 'info', `Job stopped at event index ${eventIndex}`, 'system');
+                    await browser.close();
+                    await updateJobStatus(jobId, 'stopped');
+                    process.exit(0);
+                }
+                if (jobStatus.isPaused) {
+                    log(`Job paused. Saving state at event index ${eventIndex}`, 'warning');
+                    const currentEvent = newEventObjects[eventIndex];
+                    await saveResumeState(jobId, currentEvent?.eventId || '', '', eventIndex, {
+                        totalEvents: newEventObjects.length,
+                        currentEventIndex: eventIndex
+                    });
+                    await logToDatabase(jobId, 'info', `Job paused at event index ${eventIndex}`, 'system');
+                    await browser.close();
+                    process.exit(0);
+                }
+            }
+
+            // Validate event object
+            const eventObj = newEventObjects[eventIndex];
+            if (!eventObj || !eventObj.eventId) {
+                log(`⚠️ Invalid event object at index ${eventIndex}, skipping...`, 'warning');
+                if (jobId) {
+                    await logToDatabase(jobId, 'warning', `Invalid event object at index ${eventIndex}, skipping`, 'scraper', { eventIndex });
+                }
+                continue;
+            }
+
+            const { eventId: auctionId, contact, saleInfo, extractedSaleName, eventName: auctionName } = eventObj;
+
+            // Validate required fields
+            if (!auctionId) {
+                log(`⚠️ Missing eventId at index ${eventIndex}, skipping...`, 'warning');
+                if (jobId) {
+                    await logToDatabase(jobId, 'warning', `Missing eventId at index ${eventIndex}, skipping`, 'scraper', { eventIndex });
+                }
+                continue;
+            }
 
             const inProgressFile = path.join(inProgressFolder, `auction_${auctionId}_lots.jsonl`);
             const finalFile = path.join(finalFolder, `auction_${auctionId}_lots.json`);
 
+            // Priority 1: Check final file first - if exists, auction is complete, skip it
             if (fs.existsSync(finalFile)) {
-            console.log(`⏭ Skipping auction ${auctionId} (already in final)`);
-            if (jobId) {
-                jobStats.processedEvents++;
-                jobStats.filesCompleted++;
-                await updateJobStatistics(jobId, jobStats);
-                await updateCurrentEvent(jobId, auctionId, eventIndex);
+                console.log(`⏭ Skipping auction ${auctionId} (already in final file - complete)`);
+                if (jobId) {
+                    jobStats.processedEvents++;
+                    jobStats.filesCompleted++;
+                    await updateJobStatistics(jobId, jobStats);
+                    await updateCurrentEvent(jobId, auctionId, eventIndex);
+                    await logToDatabase(jobId, 'info', `Skipped auction ${auctionId} - already in final file (complete)`, 'scraper', { auctionId });
+                }
+                continue;
             }
-            continue;
+
+            // Priority 2: If in-progress file exists but no final file, continue (incomplete auction)
+            if (fs.existsSync(inProgressFile)) {
+                console.log(`📋 Found in-progress file for auction ${auctionId}, will continue scraping...`);
+                if (jobId) {
+                    await logToDatabase(jobId, 'info', `Found in-progress file for auction ${auctionId}, continuing...`, 'scraper', { auctionId });
+                }
+                // Don't skip - continue to process this auction
+            }
+
+            // Priority 3: Check database only if no files exist - but be more strict
+            // Only skip if uploaded_files says Completed (meaning it was fully processed)
+            if (!fs.existsSync(inProgressFile) && !fs.existsSync(finalFile)) {
+                const fileName = `auction_${auctionId}_lots.json`;
+                try {
+                    const uploadedCheck = await pool.query(
+                        `SELECT status FROM uploaded_files WHERE file_name = $1 AND status = 'Completed' LIMIT 1`,
+                        [fileName]
+                    );
+                    if (uploadedCheck.rows.length > 0) {
+                        console.log(`⏭ Skipping auction ${auctionId} (marked as Completed in uploaded_files)`);
+                        if (jobId) {
+                            jobStats.processedEvents++;
+                            jobStats.filesCompleted++;
+                            await updateJobStatistics(jobId, jobStats);
+                            await updateCurrentEvent(jobId, auctionId, eventIndex);
+                            await logToDatabase(jobId, 'info', `Skipped auction ${auctionId} - marked as Completed in database`, 'scraper', { auctionId });
+                        }
+                        continue;
+                    }
+                } catch (dbErr) {
+                    // If database check fails, continue processing (fail-safe)
+                    console.warn(`Database check failed for ${auctionId}, continuing...`);
+                }
             }
 
             // Update current event ID
@@ -592,33 +909,20 @@ if (!fs.existsSync(finalFolder)) {
                 await updateCurrentEvent(jobId, auctionId, eventIndex);
                 jobStats.filesCreated++;
                 await updateJobStatistics(jobId, jobStats);
-                await logToDatabase(jobId, 'info', `Processing auction ${auctionId}: ${auctionName}`, 'scraper', { auctionId, auctionName });
+                await logToDatabase(jobId, 'info', `Processing auction ${auctionId}: ${auctionName || 'Unknown'}`, 'scraper', { auctionId, auctionName: auctionName || 'Unknown' });
             }
 
-            let existingLots = [];
-            if (fs.existsSync(inProgressFile)) {
-            existingLots = fs.readFileSync(inProgressFile, 'utf-8')
-                .split('\n')
-                .filter(Boolean)
-                .map(line => {
-                const lot = JSON.parse(line);
-                delete lot.auctionid;
-                delete lot.auctionname;
-                delete lot.auctiontitle;
-                delete lot.eventdate;
-                return lot;
-                });
-            }
-
-            const scrapedLotNumbers = new Set(existingLots.map(l => l.lotnumber));
+            // Extract auction metadata from page FIRST (before processing existing lots)
             const page = await browser.newPage();
             const baseUrl = `https://www.numisbids.com/sale/${auctionId}`;
-            let allLotsScrapedSuccessfully = true; // ✅ NEW FLAG
+            let auctionTitle = '';
+            let eventDate = '';
+            let totalPages = 1;
+            let pageAuctionName = auctionName || 'Unknown'; // Use extracted name as fallback
 
             try {
                 await page.goto(baseUrl, { timeout: 60000 });
-
-                    const { auctionName, auctionTitle, eventDate, totalPages } = await page.evaluate(() => {
+                const pageMetadata = await page.evaluate(() => {
                     const textDiv = document.querySelector('.text');
                     const auctionName = textDiv?.querySelector('.name')?.textContent.trim() || '';
                     const bTags = textDiv?.querySelectorAll('b');
@@ -633,6 +937,54 @@ if (!fs.existsSync(finalFolder)) {
 
                     return { auctionName, auctionTitle: `${auctionName}, ${title}`, eventDate, totalPages };
                 });
+                
+                pageAuctionName = pageMetadata.auctionName || auctionName;
+                auctionTitle = pageMetadata.auctionTitle || `${auctionName}, Unknown`;
+                eventDate = pageMetadata.eventDate || '';
+                totalPages = pageMetadata.totalPages || 1;
+            } catch (err) {
+                console.warn(`⚠️ Failed to extract metadata from page for ${auctionId}: ${err.message}`);
+                // Use fallback values
+                auctionTitle = `${auctionName}, Unknown`;
+                if (jobId) {
+                    await logToDatabase(jobId, 'warning', `Failed to extract metadata from page for ${auctionId}: ${err.message}`, 'scraper');
+                }
+            }
+
+            // Now process existing lots with metadata available
+            // Preserve field order to match single event mode: auctionid → loturl → auctionname → auctiontitle → eventdate → ...
+            let existingLots = [];
+            if (fs.existsSync(inProgressFile)) {
+                existingLots = fs.readFileSync(inProgressFile, 'utf-8')
+                    .split('\n')
+                    .filter(Boolean)
+                    .map(line => {
+                        const lot = JSON.parse(line);
+                        
+                        // Reorder fields to match single event mode structure
+                        const orderedLot = {
+                            auctionid: lot.auctionid && lot.auctionid === String(auctionId) ? lot.auctionid : String(auctionId),
+                            loturl: lot.loturl || '',
+                            auctionname: lot.auctionname && lot.auctionid === String(auctionId) ? lot.auctionname : pageAuctionName,
+                            auctiontitle: lot.auctiontitle && lot.auctionid === String(auctionId) ? lot.auctiontitle : auctionTitle,
+                            eventdate: lot.eventdate && lot.auctionid === String(auctionId) ? lot.eventdate : eventDate,
+                            category: lot.category || '',
+                            startingprice: lot.startingprice || '',
+                            realizedprice: lot.realizedprice || '',
+                            imagepath: lot.imagepath || '',
+                            fulldescription: lot.fulldescription || '',
+                            lotnumber: lot.lotnumber || '',
+                            shortdescription: lot.shortdescription || '',
+                            lotname: lot.lotname || ''
+                        };
+                        return orderedLot;
+                    });
+            }
+
+            const scrapedLotNumbers = new Set(existingLots.map(l => l.lotnumber));
+            let allLotsScrapedSuccessfully = true; // ✅ NEW FLAG
+
+            try {
 
                 const allLots = [...existingLots];
 
@@ -645,20 +997,26 @@ if (!fs.existsSync(finalFolder)) {
                     for (const lot of lotElements) {
                         const lotNumber = await lot.$eval('.lot a', el => el.textContent.trim().replace('Lot ', ''));
                         
-                        // Check pause status before processing each lot
-                        if (jobId && await checkPauseStatus(jobId)) {
-                            log(`Job paused. Saving state at event ${auctionId}, lot ${lotNumber}`, 'warning');
-                            await saveResumeState(jobId, auctionId, lotNumber, eventIndex, {
-                                inProgressFile,
-                                finalFile
-                            });
-                            await logToDatabase(jobId, 'info', `Job paused at event ${auctionId}, lot ${lotNumber}`, 'system');
-                            // Wait in loop until resumed
-                            while (await checkPauseStatus(jobId)) {
-                                await new Promise(resolve => setTimeout(resolve, 2000)); // Check every 2 seconds
+                        // Check pause/stop status before processing each lot
+                        if (jobId) {
+                            const jobStatus = await checkJobStatus(jobId);
+                            if (jobStatus.isStopped) {
+                                log(`Job stopped. Exiting at event ${auctionId}, lot ${lotNumber}`, 'warning');
+                                await logToDatabase(jobId, 'info', `Job stopped at event ${auctionId}, lot ${lotNumber}`, 'system');
+                                await browser.close();
+                                await updateJobStatus(jobId, 'stopped');
+                                process.exit(0);
                             }
-                            log(`Job resumed. Continuing from event ${auctionId}, lot ${lotNumber}`, 'info');
-                            await logToDatabase(jobId, 'info', `Job resumed at event ${auctionId}, lot ${lotNumber}`, 'system');
+                            if (jobStatus.isPaused) {
+                                log(`Job paused. Saving state at event ${auctionId}, lot ${lotNumber}`, 'warning');
+                                await saveResumeState(jobId, auctionId, lotNumber, eventIndex, {
+                                    inProgressFile,
+                                    finalFile
+                                });
+                                await logToDatabase(jobId, 'info', `Job paused at event ${auctionId}, lot ${lotNumber}`, 'system');
+                                await browser.close();
+                                process.exit(0);
+                            }
                         }
                         if (scrapedLotNumbers.has(lotNumber)) {
                             console.log(`  ↪️ Already scraped lot ${lotNumber}, skipping.`);
@@ -703,7 +1061,11 @@ if (!fs.existsSync(finalFolder)) {
                             await detailPage.close();
 
                             const lotData = {
+                            auctionid: String(auctionId),
                             loturl: prettyLotUrl,
+                            auctionname: pageAuctionName,
+                            auctiontitle: auctionTitle,
+                            eventdate: eventDate,
                             category,
                             startingprice: startingPrice,
                             realizedprice: realizedPrice,
@@ -723,7 +1085,7 @@ if (!fs.existsSync(finalFolder)) {
                                 try {
                                     const eventData = {
                                         auctionid: auctionId,
-                                        auctionname: auctionName,
+                                        auctionname: pageAuctionName,
                                         auctiontitle: auctionTitle,
                                         eventdate: eventDate,
                                         contact,
@@ -796,6 +1158,8 @@ if (!fs.existsSync(finalFolder)) {
                                         eventId: auctionId, 
                                         error: err.message 
                                     });
+                                    await browser.close();
+                                    process.exit(0);
                                 } catch (pauseErr) {
                                     console.error(`Failed to pause job on error: ${pauseErr.message}`);
                                 }
@@ -842,23 +1206,33 @@ if (!fs.existsSync(finalFolder)) {
                 }
 
             } catch (err) {
-            console.error(`❌ Failed auction ${auctionId}: ${err.message}`);
-            if (jobId) {
-                // Pause job on error and save state
-                try {
-                    await updateJobStatus(jobId, 'paused');
-                    await saveResumeState(jobId, auctionId, null, eventIndex, {
-                        inProgressFile,
-                        finalFile,
-                        error: err.message,
-                        errorStack: err.stack
-                    });
-                    await logToDatabase(jobId, 'error', `Failed auction ${auctionId}: ${err.message}. Job paused.`, 'scraper', { auctionId, error: err.message });
-                } catch (pauseErr) {
-                    console.error(`Failed to pause job on error: ${pauseErr.message}`);
-                await logToDatabase(jobId, 'error', `Failed auction ${auctionId}: ${err.message}`, 'scraper', { auctionId, error: err.message });
+                console.error(`❌ Failed auction ${auctionId}: ${err.message}`);
+                if (jobId) {
+                    // Check if job was stopped before pausing on error
+                    const jobStatus = await checkJobStatus(jobId);
+                    if (jobStatus.isStopped) {
+                        await logToDatabase(jobId, 'info', `Job stopped after error on auction ${auctionId}`, 'scraper', { auctionId, error: err.message });
+                        await browser.close();
+                        await updateJobStatus(jobId, 'stopped');
+                        process.exit(0);
+                    }
+                    // Pause job on error and save state
+                    try {
+                        await updateJobStatus(jobId, 'paused');
+                        await saveResumeState(jobId, auctionId, null, eventIndex, {
+                            inProgressFile,
+                            finalFile,
+                            error: err.message,
+                            errorStack: err.stack
+                        });
+                        await logToDatabase(jobId, 'error', `Failed auction ${auctionId}: ${err.message}. Job paused.`, 'scraper', { auctionId, error: err.message });
+                        await browser.close();
+                        process.exit(0);
+                    } catch (pauseErr) {
+                        console.error(`Failed to pause job on error: ${pauseErr.message}`);
+                        await logToDatabase(jobId, 'error', `Failed auction ${auctionId}: ${err.message}`, 'scraper', { auctionId, error: err.message });
+                    }
                 }
-            }
             }
 
             await page.close();

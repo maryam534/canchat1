@@ -116,13 +116,8 @@
                     <label class="block text-sm font-medium text-gray-700 mb-1">Run Mode</label>
                     <select id="runMode" name="runMode" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                         <option value="all">All Available Events</option>
-                        <option value="max">Limited Count</option>
                         <option value="one">Specific Event ID</option>
                     </select>
-                </div>
-                <div id="maxSalesDiv" style="display: none;">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Max Sales</label>
-                    <input type="number" id="maxSales" name="maxSales" placeholder="e.g., 5" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                 </div>
                 <div id="eventIdDiv" style="display: none;">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Event ID</label>
@@ -733,14 +728,9 @@ function forceStartNewJob() {
 // Start bulk scraping
 function startBulkScraping(forceStart = false) {
     const runMode = document.getElementById('runMode').value;
-    const maxSales = document.getElementById('maxSales').value;
     const eventId = document.getElementById('eventId').value;
     
     // Validate inputs
-    if (runMode === 'max' && !maxSales) {
-        alert('Please enter Max Sales');
-        return;
-    }
     if (runMode === 'one' && !eventId) {
         alert('Please enter Event ID');
         return;
@@ -750,7 +740,6 @@ function startBulkScraping(forceStart = false) {
     const formData = new FormData();
     formData.append('action', 'start');
     formData.append('runMode', runMode);
-    if (maxSales) formData.append('maxSales', maxSales);
     if (eventId) formData.append('eventId', eventId);
     if (forceStart) formData.append('force', '1');
     formData.append('ajax', '1');
@@ -761,11 +750,20 @@ function startBulkScraping(forceStart = false) {
     startMonitoring();
     addActivityLog('Starting bulk scraping...');
     
-    // Start scraping
-    fetch('tasks/run_scraper.cfm', {
+    // Start scraping with timeout and retry logic
+    const fetchWithTimeout = (url, options, timeout = 30000) => {
+        return Promise.race([
+            fetch(url, options),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Request timeout')), timeout)
+            )
+        ]);
+    };
+    
+    fetchWithTimeout('tasks/run_scraper.cfm', {
         method: 'POST',
         body: formData
-    })
+    }, 30000)
     .then(response => {
         // Check if response is OK
         if (!response.ok) {
@@ -880,7 +878,63 @@ function startBulkScraping(forceStart = false) {
     .catch(error => {
         // Only show error if there's actually an error message
         const errorMsg = error.message || error.toString() || '';
-        if (errorMsg && errorMsg.trim() !== '') {
+        
+        // Handle "Failed to fetch" or network errors - might be a timeout, retry once
+        if (errorMsg.includes('Failed to fetch') || errorMsg.includes('Request timeout') || errorMsg.includes('NetworkError')) {
+            console.warn('Network error detected, checking if job actually started...');
+            addActivityLog('Network error detected, checking job status...');
+            
+            // Wait a moment then check if job actually started
+            setTimeout(() => {
+                fetch('tasks/run_scraper.cfm?action=status&ajax=1')
+                    .then(response => {
+                        const contentType = response.headers.get('content-type');
+                        if (contentType && contentType.includes('application/json')) {
+                            return response.json();
+                        }
+                        return response.text().then(text => {
+                            try {
+                                return JSON.parse(text);
+                            } catch (e) {
+                                return null;
+                            }
+                        });
+                    })
+                    .then(data => {
+                        if (data && data.currentJob && (data.currentJob.id || data.CURRENTJOB)) {
+                            // Job actually started! Show success
+                            const job = data.currentJob || data.CURRENTJOB;
+                            const jobId = job.id || job.ID || 'N/A';
+                            addActivityLog('Job started successfully (Job ID: ' + jobId + ') - network error was false alarm');
+                            
+                            // Show monitoring dashboard
+                            if (!isMonitoringVisible) {
+                                document.getElementById('monitoringDashboard').style.display = 'block';
+                                isMonitoringVisible = true;
+                                startMonitoring();
+                            }
+                            
+                            // Show buttons
+                            document.getElementById('pauseBtn').style.display = 'inline-block';
+                            document.getElementById('resumeBtn').style.display = 'none';
+                            document.getElementById('stopBtn').style.display = 'inline-block';
+                            
+                            updateMonitoring();
+                        } else {
+                            // Job didn't start, show error
+                            console.error('Error starting scraping:', error);
+                            alert('Error starting scraping: ' + errorMsg + '\n\nPlease try again.');
+                            addActivityLog('Error: ' + errorMsg);
+                        }
+                    })
+                    .catch(checkError => {
+                        // Check also failed, show original error
+                        console.error('Error starting scraping:', error);
+                        alert('Error starting scraping: ' + errorMsg + '\n\nPlease try again.');
+                        addActivityLog('Error: ' + errorMsg);
+                    });
+            }, 2000); // Wait 2 seconds before checking
+        } else if (errorMsg && errorMsg.trim() !== '') {
             console.error('Error starting scraping:', error);
             alert('Error starting scraping: ' + errorMsg);
             addActivityLog('Error: ' + errorMsg);
@@ -1031,7 +1085,6 @@ function addActivityLog(message) {
 // Handle run mode changes
 document.getElementById('runMode').addEventListener('change', function() {
     const runMode = this.value;
-    document.getElementById('maxSalesDiv').style.display = (runMode === 'max') ? 'block' : 'none';
     document.getElementById('eventIdDiv').style.display = (runMode === 'one') ? 'block' : 'none';
 });
 

@@ -362,13 +362,16 @@ function chatInterface() {
                     tempDiv.innerHTML = htmlResponse;
                     const answerBox = tempDiv.querySelector('.answer-box');
                     
-                    if (answerBox) {
-                        // Extract content from .answer-box div
-                        this.addMessage('ai', answerBox.innerHTML);
-                    } else {
-                        // Render the full response as HTML directly
-                        this.addMessage('ai', htmlResponse);
-                    }
+                    let content = answerBox ? answerBox.innerHTML : htmlResponse;
+                    
+                    // Convert markdown image syntax to HTML img tags
+                    content = content.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:300px; border-radius:8px; margin:10px 0;">');
+                    
+                    // Also handle plain image URLs in the response
+                    content = content.replace(/(Image URL:\s*)(https?:\/\/[^\s<]+\.(jpg|jpeg|png|gif|webp))/gi, 
+                        '$1<br><img src="$2" alt="Lot Image" style="max-width:300px; border-radius:8px; margin:10px 0;">');
+                    
+                    this.addMessage('ai', content);
                     
                 } catch (error) {
                     console.error('Response parsing error:', error);

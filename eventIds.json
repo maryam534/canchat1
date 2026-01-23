@@ -1,1 +1,1182 @@
-[]
+[
+  {
+    "number": 1,
+    "eventId": "10243",
+    "eventUrl": "https://www.numisbids.com/sale/10243",
+    "eventName": "Stephen Album Rare Coins",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/stevealbumlogo.gif",
+      "saleNumber": "54"
+    }
+  },
+  {
+    "number": 2,
+    "eventId": "10279",
+    "eventUrl": "https://www.numisbids.com/sale/10279",
+    "eventName": "Rzeszowski Dom Aukcyjny",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "Rzeszowski Dom Aukcyjny Sp. z o.o.",
+      "address": "Ul. 3 Maja 13, 35-030 Rzeszów",
+      "phone": "tel: +48 727 597 599",
+      "fax": "",
+      "tollFree": "",
+      "email": "mail: biuro@rzeszowskidomaukcyjny.pl",
+      "website": "http://www.rzeszowskidomaukcyjny.pl"
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/rdalogo.gif",
+      "saleNumber": "25"
+    }
+  },
+  {
+    "number": 3,
+    "eventId": "10263",
+    "eventUrl": "https://www.numisbids.com/sale/10263",
+    "eventName": "Noonans Mayfair",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "Noonans (formerly Dix Noonan Webb)",
+      "address": "16 Bolton St, Mayfair, London, W1J 8BQ",
+      "phone": "Telephone: +44 (0) 20 7016 1700",
+      "fax": "Fax: +44 (0) 20 7016 1799",
+      "tollFree": "",
+      "email": "Email: auctions@noonans.co.uk",
+      "website": "http://www.noonans.co.uk"
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/dnwlogo.gif",
+      "saleNumber": "346"
+    }
+  },
+  {
+    "number": 4,
+    "eventId": "10184",
+    "eventUrl": "https://www.numisbids.com/sale/10184",
+    "eventName": "Fritz Rudolf Künker GmbH & Co. KG",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "Fritz Rudolf Künker GmbH & Co. KG",
+      "address": "Nobbenburger Straße 4, 49076 Osnabrück",
+      "phone": "Telephone: +49 541 96202 0",
+      "fax": "Fax: +49 541 96202 22",
+      "tollFree": "",
+      "email": "E-Mail: service@kuenker.de",
+      "website": "Internet: http://www.kuenker.de/"
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/kunkerlogo.gif",
+      "saleNumber": "437"
+    }
+  },
+  {
+    "number": 5,
+    "eventId": "10248",
+    "eventUrl": "https://www.numisbids.com/sale/10248",
+    "eventName": "Stanley Gibbons Baldwin's",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "Stanley Gibbons Baldwin's",
+      "address": "399 Strand, London",
+      "phone": "Tel.:+44 (0) 207 557 4405",
+      "fax": "",
+      "tollFree": "",
+      "email": "Email: auctions@sgbaldwins.com",
+      "website": "https://sgbaldwins.com"
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/baldwinslogo.gif",
+      "saleNumber": "26001"
+    }
+  },
+  {
+    "number": 6,
+    "eventId": "10283",
+    "eventUrl": "https://www.numisbids.com/sale/10283",
+    "eventName": "The Coin Cabinet",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/tcclogo.gif?v=1",
+      "saleNumber": "126"
+    }
+  },
+  {
+    "number": 7,
+    "eventId": "10284",
+    "eventUrl": "https://www.numisbids.com/sale/10284",
+    "eventName": "Numismática Leilões",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/leiloeslogo.gif",
+      "saleNumber": "119"
+    }
+  },
+  {
+    "number": 8,
+    "eventId": "10182",
+    "eventUrl": "https://www.numisbids.com/sale/10182",
+    "eventName": "Harlan J. Berk Ltd.",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/berklogo.gif",
+      "saleNumber": "234"
+    }
+  },
+  {
+    "number": 9,
+    "eventId": "10244",
+    "eventUrl": "https://www.numisbids.com/sale/10244",
+    "eventName": "Casa de Subastas de Madrid",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/csmlogo.gif",
+      "saleNumber": "657"
+    }
+  },
+  {
+    "number": 10,
+    "eventId": "10246",
+    "eventUrl": "https://www.numisbids.com/sale/10246",
+    "eventName": "Auction World",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/auctionworldlogo.gif",
+      "saleNumber": "43"
+    }
+  },
+  {
+    "number": 11,
+    "eventId": "10262",
+    "eventUrl": "https://www.numisbids.com/sale/10262",
+    "eventName": "VIA GmbH",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/vialogo.gif",
+      "saleNumber": "25"
+    }
+  },
+  {
+    "number": 12,
+    "eventId": "10213",
+    "eventUrl": "https://www.numisbids.com/sale/10213",
+    "eventName": "Aurora S.p.a.",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/auroralogo.gif",
+      "saleNumber": "34"
+    }
+  },
+  {
+    "number": 13,
+    "eventId": "10265",
+    "eventUrl": "https://www.numisbids.com/sale/10265",
+    "eventName": "The Coin Cabinet",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/tcclogo.gif?v=1",
+      "saleNumber": "31"
+    }
+  },
+  {
+    "number": 14,
+    "eventId": "10260",
+    "eventUrl": "https://www.numisbids.com/sale/10260",
+    "eventName": "St. James's Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/stjameslogo.gif",
+      "saleNumber": "118"
+    }
+  },
+  {
+    "number": 15,
+    "eventId": "10282",
+    "eventUrl": "https://www.numisbids.com/sale/10282",
+    "eventName": "Ginza Coins",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/ginzalogo.gif",
+      "saleNumber": "126"
+    }
+  },
+  {
+    "number": 16,
+    "eventId": "10272",
+    "eventUrl": "https://www.numisbids.com/sale/10272",
+    "eventName": "Noonans Mayfair",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/dnwlogo.gif",
+      "saleNumber": "347"
+    }
+  },
+  {
+    "number": 17,
+    "eventId": "10216",
+    "eventUrl": "https://www.numisbids.com/sale/10216",
+    "eventName": "Münzenhandlung G. Hirsch Nachfolger",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/hirschlogo.gif",
+      "saleNumber": "404"
+    }
+  },
+  {
+    "number": 18,
+    "eventId": "10269",
+    "eventUrl": "https://www.numisbids.com/sale/10269",
+    "eventName": "Cayón Subastas",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/cayonlogo.gif",
+      "saleNumber": "435"
+    }
+  },
+  {
+    "number": 19,
+    "eventId": "10205",
+    "eventUrl": "https://www.numisbids.com/sale/10205",
+    "eventName": "Noonans Mayfair",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/dnwlogo.gif",
+      "saleNumber": "73"
+    }
+  },
+  {
+    "number": 20,
+    "eventId": "10217",
+    "eventUrl": "https://www.numisbids.com/sale/10217",
+    "eventName": "Münzenhandlung G. Hirsch Nachfolger",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/hirschlogo.gif",
+      "saleNumber": "405"
+    }
+  },
+  {
+    "number": 21,
+    "eventId": "10188",
+    "eventUrl": "https://www.numisbids.com/sale/10188",
+    "eventName": "Heritage World Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/heritagelogo.gif",
+      "saleNumber": "3130"
+    }
+  },
+  {
+    "number": 22,
+    "eventId": "10253",
+    "eventUrl": "https://www.numisbids.com/sale/10253",
+    "eventName": "L5, LLC",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/l5logo.gif",
+      "saleNumber": "4"
+    }
+  },
+  {
+    "number": 23,
+    "eventId": "10250",
+    "eventUrl": "https://www.numisbids.com/sale/10250",
+    "eventName": "SHENBERG AUCTION LTD",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/coinstorelogo.gif",
+      "saleNumber": "13"
+    }
+  },
+  {
+    "number": 24,
+    "eventId": "10271",
+    "eventUrl": "https://www.numisbids.com/sale/10271",
+    "eventName": "Savoca Coins",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/savocalogo.gif",
+      "saleNumber": null
+    }
+  },
+  {
+    "number": 25,
+    "eventId": "10230",
+    "eventUrl": "https://www.numisbids.com/sale/10230",
+    "eventName": "Money Corner",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/moneycornerlogo.gif",
+      "saleNumber": "18"
+    }
+  },
+  {
+    "number": 26,
+    "eventId": "10270",
+    "eventUrl": "https://www.numisbids.com/sale/10270",
+    "eventName": "Myntauktioner i Sverige AB",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/mislogo.gif",
+      "saleNumber": "75"
+    }
+  },
+  {
+    "number": 27,
+    "eventId": "10225",
+    "eventUrl": "https://www.numisbids.com/sale/10225",
+    "eventName": "Heritage World Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "Heritage Auctions, Inc.",
+      "address": "2801 W. Airport Freeway, Dallas, Texas 75261",
+      "phone": "",
+      "fax": "1-800-872-6467 / (214) 528-3500 / Fax: (214) 409-1425",
+      "tollFree": "",
+      "email": "",
+      "website": "https://coins.ha.com"
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/heritagelogo.gif",
+      "saleNumber": "65197"
+    }
+  },
+  {
+    "number": 28,
+    "eventId": "10231",
+    "eventUrl": "https://www.numisbids.com/sale/10231",
+    "eventName": "Oslo Møntgalleri A/S",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/osloaslogo.gif",
+      "saleNumber": "13"
+    }
+  },
+  {
+    "number": 29,
+    "eventId": "10197",
+    "eventUrl": "https://www.numisbids.com/sale/10197",
+    "eventName": "Nomisma Spa",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/nomismalogo.gif",
+      "saleNumber": "43"
+    }
+  },
+  {
+    "number": 30,
+    "eventId": "10223",
+    "eventUrl": "https://www.numisbids.com/sale/10223",
+    "eventName": "Heritage World Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "Heritage Auctions, Inc.",
+      "address": "2801 W. Airport Freeway, Dallas, Texas 75261",
+      "phone": "",
+      "fax": "1-800-872-6467 / (214) 528-3500 / Fax: (214) 409-1425",
+      "tollFree": "",
+      "email": "",
+      "website": "https://coins.ha.com"
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/heritagelogo.gif",
+      "saleNumber": "61586"
+    }
+  },
+  {
+    "number": 31,
+    "eventId": "10264",
+    "eventUrl": "https://www.numisbids.com/sale/10264",
+    "eventName": "Spink",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/spinklogo.gif",
+      "saleNumber": "25700"
+    }
+  },
+  {
+    "number": 32,
+    "eventId": "10224",
+    "eventUrl": "https://www.numisbids.com/sale/10224",
+    "eventName": "Heritage World Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": "https://coins.ha.com"
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/heritagelogo.gif",
+      "saleNumber": "61589"
+    }
+  },
+  {
+    "number": 33,
+    "eventId": "10234",
+    "eventUrl": "https://www.numisbids.com/sale/10234",
+    "eventName": "Numismática ibercoin",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/ibercoinlogo.gif",
+      "saleNumber": "127"
+    }
+  },
+  {
+    "number": 34,
+    "eventId": "10247",
+    "eventUrl": "https://www.numisbids.com/sale/10247",
+    "eventName": "17 Auctions S.L",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/17auctionslogo.gif",
+      "saleNumber": "30"
+    }
+  },
+  {
+    "number": 35,
+    "eventId": "10208",
+    "eventUrl": "https://www.numisbids.com/sale/10208",
+    "eventName": "Aureo & Calicó S.L.",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/aureocalicologo.gif",
+      "saleNumber": "461"
+    }
+  },
+  {
+    "number": 36,
+    "eventId": "10290",
+    "eventUrl": "https://www.numisbids.com/sale/10290",
+    "eventName": "Green Apple Auction",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/greenapplelogo.gif",
+      "saleNumber": null
+    }
+  },
+  {
+    "number": 37,
+    "eventId": "10255",
+    "eventUrl": "https://www.numisbids.com/sale/10255",
+    "eventName": "Artemide Aste s.r.l.",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/artemidelogo.gif",
+      "saleNumber": "41"
+    }
+  },
+  {
+    "number": 38,
+    "eventId": "10191",
+    "eventUrl": "https://www.numisbids.com/sale/10191",
+    "eventName": "Numismatica Ranieri S.r.l.",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/ranierilogo.gif",
+      "saleNumber": "22"
+    }
+  },
+  {
+    "number": 39,
+    "eventId": "10195",
+    "eventUrl": "https://www.numisbids.com/sale/10195",
+    "eventName": "MDC Monaco",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/mdclogo.gif",
+      "saleNumber": "2"
+    }
+  },
+  {
+    "number": 40,
+    "eventId": "10239",
+    "eventUrl": "https://www.numisbids.com/sale/10239",
+    "eventName": "Heritage World Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/heritagelogo.gif",
+      "saleNumber": "61593"
+    }
+  },
+  {
+    "number": 41,
+    "eventId": "10274",
+    "eventUrl": "https://www.numisbids.com/sale/10274",
+    "eventName": "Time Numismatic GmbH",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/timelogo.gif",
+      "saleNumber": "4"
+    }
+  },
+  {
+    "number": 42,
+    "eventId": "10278",
+    "eventUrl": "https://www.numisbids.com/sale/10278",
+    "eventName": "Bruun Rasmussen",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/bruunlogo.gif",
+      "saleNumber": "2605"
+    }
+  },
+  {
+    "number": 43,
+    "eventId": "10238",
+    "eventUrl": "https://www.numisbids.com/sale/10238",
+    "eventName": "Heritage World Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/heritagelogo.gif",
+      "saleNumber": "61594"
+    }
+  },
+  {
+    "number": 44,
+    "eventId": "10259",
+    "eventUrl": "https://www.numisbids.com/sale/10259",
+    "eventName": "Pesek Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/peseklogo.gif",
+      "saleNumber": "29"
+    }
+  },
+  {
+    "number": 45,
+    "eventId": "10286",
+    "eventUrl": "https://www.numisbids.com/sale/10286",
+    "eventName": "Crown Currency",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/crownlogo.gif",
+      "saleNumber": "49"
+    }
+  },
+  {
+    "number": 46,
+    "eventId": "10267",
+    "eventUrl": "https://www.numisbids.com/sale/10267",
+    "eventName": "Solidus Numismatik e.K.",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/soliduslogo.gif",
+      "saleNumber": "154"
+    }
+  },
+  {
+    "number": 47,
+    "eventId": "10249",
+    "eventUrl": "https://www.numisbids.com/sale/10249",
+    "eventName": "Van Acker Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/vanackerlogo.gif",
+      "saleNumber": null
+    }
+  },
+  {
+    "number": 48,
+    "eventId": "10261",
+    "eventUrl": "https://www.numisbids.com/sale/10261",
+    "eventName": "Bertolami Fine Art",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/artcoinsromalogo.gif",
+      "saleNumber": "367"
+    }
+  },
+  {
+    "number": 49,
+    "eventId": "10266",
+    "eventUrl": "https://www.numisbids.com/sale/10266",
+    "eventName": "CoinsNB",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/coinsnblogo.gif",
+      "saleNumber": "53"
+    }
+  },
+  {
+    "number": 50,
+    "eventId": "10256",
+    "eventUrl": "https://www.numisbids.com/sale/10256",
+    "eventName": "Heritage World Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "Heritage Auctions, Inc.",
+      "address": "2801 W. Airport Freeway, Dallas, Texas 75261",
+      "phone": "",
+      "fax": "1-800-872-6467 / (214) 528-3500 / Fax: (214) 409-1425",
+      "tollFree": "",
+      "email": "",
+      "website": "https://coins.ha.com"
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/heritagelogo.gif",
+      "saleNumber": "61595"
+    }
+  },
+  {
+    "number": 51,
+    "eventId": "10268",
+    "eventUrl": "https://www.numisbids.com/sale/10268",
+    "eventName": "Astarte S.A.",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/astartelogo.gif",
+      "saleNumber": "12"
+    }
+  },
+  {
+    "number": 52,
+    "eventId": "10183",
+    "eventUrl": "https://www.numisbids.com/sale/10183",
+    "eventName": "EWAAN Galleries",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/ewaanlogo.gif",
+      "saleNumber": "219"
+    }
+  },
+  {
+    "number": 53,
+    "eventId": "10257",
+    "eventUrl": "https://www.numisbids.com/sale/10257",
+    "eventName": "Heritage World Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "Heritage Auctions, Inc.",
+      "address": "2801 W. Airport Freeway, Dallas, Texas 75261",
+      "phone": "",
+      "fax": "1-800-872-6467 / (214) 528-3500 / Fax: (214) 409-1425",
+      "tollFree": "",
+      "email": "",
+      "website": "https://coins.ha.com"
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/heritagelogo.gif",
+      "saleNumber": "61596"
+    }
+  },
+  {
+    "number": 54,
+    "eventId": "10281",
+    "eventUrl": "https://www.numisbids.com/sale/10281",
+    "eventName": "InAsta S.p.A.",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/inastalogo.gif",
+      "saleNumber": "121"
+    }
+  },
+  {
+    "number": 55,
+    "eventId": "10288",
+    "eventUrl": "https://www.numisbids.com/sale/10288",
+    "eventName": "cgb.fr",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/cgflogo.gif",
+      "saleNumber": "2026"
+    }
+  },
+  {
+    "number": 56,
+    "eventId": "10287",
+    "eventUrl": "https://www.numisbids.com/sale/10287",
+    "eventName": "Money Corner",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/moneycornerlogo.gif",
+      "saleNumber": "19"
+    }
+  },
+  {
+    "number": 57,
+    "eventId": "10275",
+    "eventUrl": "https://www.numisbids.com/sale/10275",
+    "eventName": "Portuscalle Numismatica",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/portuscallelogo.gif",
+      "saleNumber": "36"
+    }
+  },
+  {
+    "number": 58,
+    "eventId": "10277",
+    "eventUrl": "https://www.numisbids.com/sale/10277",
+    "eventName": "Heritage World Coin Auctions",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/heritagelogo.gif",
+      "saleNumber": "61597"
+    }
+  },
+  {
+    "number": 59,
+    "eventId": "10285",
+    "eventUrl": "https://www.numisbids.com/sale/10285",
+    "eventName": "Numismatik Zöttl",
+    "extractedSaleName": "Unknown Sale Name",
+    "contact": {
+      "firmName": "",
+      "address": "",
+      "phone": "",
+      "fax": "",
+      "tollFree": "",
+      "email": "",
+      "website": ""
+    },
+    "saleInfo": {
+      "saleLogo": "https://static.numisbids.com/images/logo/zoettllogo.gif",
+      "saleNumber": "45"
+    }
+  }
+]

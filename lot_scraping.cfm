@@ -141,16 +141,15 @@
                             <label class="block text-sm font-medium text-gray-700 mb-1">Mode</label>
                             <select name="runMode" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                                 <option value="all">All Available</option>
-                                <option value="max">Limited Count</option>
                                 <option value="one">Specific Event</option>
                             </select>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Limit/Event ID</label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Event ID</label>
                             <input 
                                 type="text" 
-                                name="targetValue" 
-                                placeholder="5 or event123"
+                                name="eventId" 
+                                placeholder="e.g., 9537"
                                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm"
                             />
                         </div>

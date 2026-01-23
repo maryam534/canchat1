@@ -27,10 +27,9 @@
     }
     
     // ---- Get parameters for testing ----
-    maxSales = url.maxSales ?: form.maxSales ?: "";
     targetEventId = url.eventId ?: form.eventId ?: "";
     action = url.action ?: form.action ?: "";
-    runMode = url.runMode ?: form.runMode ?: "all"; // all, one, max
+    runMode = url.runMode ?: form.runMode ?: "all"; // all, one
     
     // Auto-start for convenience: if eventId present and no action, default to start (single event)
     if (!len(action) AND len(trim(targetEventId))) {
@@ -359,7 +358,6 @@
                 
                 jobName = "NumisBids Scraper - " & dateFormat(now(), "yyyy-MM-dd HH:mm:ss");
                 parameters = {
-                    maxSales     : maxSales,
                     targetEventId: targetEventId,
                     runMode      : runMode
                 };
@@ -371,12 +369,11 @@
                         INSERT INTO scraper_jobs
                             (job_name, status, max_sales, target_event_id, run_mode, parameters, created_by)
                         VALUES
-                            (?, 'queued', ?, ?, ?, to_jsonb(?), 'user')
+                            (?, 'queued', NULL, ?, ?, to_jsonb(?), 'user')
                         RETURNING id
                     ",
                     [
                         { value = jobName,                   cfsqltype = "cf_sql_varchar" },
-                        { value = val(maxSales),             cfsqltype = "cf_sql_integer" },
                         { value = targetEventId,             cfsqltype = "cf_sql_varchar" },
                         { value = runMode,                   cfsqltype = "cf_sql_varchar" },
                         { value = serializeJSON(parameters), cfsqltype = "cf_sql_varchar" }
@@ -413,7 +410,7 @@
                     );
                 } else {
                     // All events mode
-                    args = '"' & allJs & '"' & (len(trim(maxSales)) AND isNumeric(maxSales) ? ' --max-sales ' & maxSales : '') & ' --job-id ' & jobId;
+                    args = '"' & allJs & '"' & ' --job-id ' & jobId;
                 }
 
                 logToDatabase(jobId, 'debug', 'Launching: ' & nodeExe & ' ' & args, 'system');
@@ -421,13 +418,19 @@
                 // Launch scraper in background (non-blocking)
                 // Use cmd.exe wrapper for better Windows compatibility and error capture
                 cmdExe = paths.cmdExe ?: "cmd.exe";
-                // Get working directory - ensure it's the root directory, not tasks folder
-                workDir = getDirectoryFromPath(singleJs);
+                // Get working directory - use correct script based on mode
+                if (len(trim(targetEventId))) {
+                    workDir = getDirectoryFromPath(singleJs);
+                    scriptToCheck = singleJs;
+                } else {
+                    workDir = getDirectoryFromPath(allJs);
+                    scriptToCheck = allJs;
+                }
                 
                 // Verify the script file exists
-                if (!fileExists(singleJs)) {
-                    logToDatabase(jobId, 'error', 'Script file not found: ' & singleJs, 'system');
-                    result.error = "Script file not found: " & singleJs;
+                if (!fileExists(scriptToCheck)) {
+                    logToDatabase(jobId, 'error', 'Script file not found: ' & scriptToCheck, 'system');
+                    result.error = "Script file not found: " & scriptToCheck;
                 } else {
                     // Verify Node.js is accessible
                     nodeExePath = paths.nodeBinary;
@@ -506,7 +509,13 @@
                         // #endregion
                     } else {
                         // All events mode
-                        cmdArgs = '/c cd /d "' & getDirectoryFromPath(allJs) & '" && ' & nodeExe & ' ' & args & ' 2>&1';
+                        // Use absolute path for script and proper quoting
+                        nodeExeQuoted = (find(" ", nodeExe) > 0) ? '"' & nodeExe & '"' : nodeExe;
+                        allJsQuoted = (find(" ", allJs) > 0) ? '"' & allJs & '"' : allJs;
+                        cmdArgs = '/c cd /d "' & workDir & '" && ' & nodeExeQuoted & ' ' & allJsQuoted & ' --job-id ' & jobId & ' 2>&1';
+                        
+                        // Log the command for debugging
+                        logToDatabase(jobId, 'debug', 'All events mode command: ' & cmdArgs, 'system');
                     }
                     
                     try {
@@ -622,95 +631,7 @@
                                 errorVariable = "errVar"
                             );
                             
-                            // #region agent log - Hypothesis D: After execution
-                            try {
-                                debugLogPath = expandPath(".cursor/debug.log");
-                                logContent = serializeJSON({
-                                    location: "run_scraper.cfm:470",
-                                    message: "cfexecute completed (non-blocking)",
-                                    data: {
-                                        jobId: jobId,
-                                        outVarLen: len(variables.outVar ?: ""),
-                                        errVarLen: len(variables.errVar ?: ""),
-                                        timestampAfter: getTickCount()
-                                    },
-                                    timestamp: getTickCount(),
-                                    sessionId: "debug-session",
-                                    runId: "run1",
-                                    hypothesisId: "D"
-                                }) & chr(10);
-                                if (fileExists(debugLogPath)) {
-                                    fileAppend(debugLogPath, logContent);
-                                } else {
-                                    fileWrite(debugLogPath, logContent);
-                                }
-                            } catch (any e) {
-                                // Ignore logging errors
-                            }
-                            // #endregion
-                            
-                            // Wait for script to initialize and write to debug log
-                            // Increased wait time to allow script to fully start
-                            sleep(8000);
-                            
-                            // Check debug log file for immediate errors
-                            debugLogPath = workDir & "\scrape_debug.log";
-                            if (fileExists(debugLogPath)) {
-                                try {
-                                    // Wait a bit more for script to write (file writes might be buffered)
-                                    sleep(3000);
-                                    // Force file system sync by reading multiple times
-                                    debugLogContent = "";
-                                    for (i = 1; i <= 3; i++) {
-                                        sleep(1000);
-                                        debugLogContent = fileRead(debugLogPath);
-                                        // Check if we have new content for this job
-                                        if (findNoCase("jobId=" & jobId, debugLogContent) > 0 || findNoCase("Script started: eventId=" & trim(targetEventId), debugLogContent) > 0) {
-                                            break;
-                                        }
-                                    }
-                                    // Get last 2000 characters (more recent entries)
-                                    if (len(debugLogContent) > 2000) {
-                                        debugLogContent = right(debugLogContent, 2000);
-                                    }
-                                    logToDatabase(jobId, 'debug', 'Debug log content (last 2000 chars): ' & debugLogContent, 'system');
-                                    
-                                    // Check specifically for this jobId (the script writes "jobId=35" format)
-                                    if (findNoCase("jobId=" & jobId, debugLogContent) > 0 || findNoCase("jobId=" & jobId & ",", debugLogContent) > 0) {
-                                        logToDatabase(jobId, 'info', 'SUCCESS: Found debug log entry for jobId ' & jobId & ' - script started!', 'system');
-                                    } else {
-                                        // Also check for eventId as fallback (script might have started but jobId check failed)
-                                        if (findNoCase("Script started: eventId=" & trim(targetEventId), debugLogContent) > 0) {
-                                            logToDatabase(jobId, 'info', 'Script started (found eventId in log, but jobId check failed - this is OK)', 'system');
-                                        } else {
-                                            logToDatabase(jobId, 'warning', 'Script may not have started - no debug log entry found for jobId ' & jobId & ' or eventId ' & trim(targetEventId), 'system');
-                                            // Show the actual command that was executed
-                                            logToDatabase(jobId, 'debug', 'Command executed: ' & cmdExe & ' ' & cmdArgs, 'system');
-                                            // Check if script file is readable
-                                            if (fileExists(singleJs)) {
-                                                logToDatabase(jobId, 'debug', 'Script file exists and is readable: ' & singleJs, 'system');
-                                            } else {
-                                                logToDatabase(jobId, 'error', 'Script file does not exist: ' & singleJs, 'system');
-                                                updateJobStatus(jobId, "error", {error_message: "Script file not found: " & singleJs});
-                                            }
-                                            // If script didn't start after 11 seconds, mark as error
-                                            // (We wait 8+3 seconds, so if still no log, it's likely failed)
-                                            updateJobStatus(jobId, "error", {error_message: "Script failed to start - no debug log entry found after 11 seconds. Command: " & cmdExe & " " & cmdArgs});
-                                        }
-                                    }
-                                } catch (any readErr) {
-                                    logToDatabase(jobId, 'debug', 'Could not read debug log: ' & readErr.message, 'system');
-                                }
-                            } else {
-                                logToDatabase(jobId, 'warning', 'Debug log file not found: ' & debugLogPath & ' - script may not have started', 'system');
-                                // Verify the working directory exists
-                                if (!directoryExists(workDir)) {
-                                    logToDatabase(jobId, 'error', 'Working directory does not exist: ' & workDir, 'system');
-                                }
-                            }
-                            
-                            // Log any immediate output/errors from cfexecute
-                            // These are captured from stdout/stderr
+                            // Log any immediate output/errors from cfexecute (non-blocking check)
                             if (structKeyExists(variables, "outVar") && len(trim(variables.outVar))) {
                                 logToDatabase(jobId, 'info', 'Script output (stdout): ' & left(variables.outVar, 1000), 'system');
                                 writeLog(file="scraper", text="[JOB " & jobId & "] Script stdout: " & left(variables.outVar, 500), type="information");
@@ -721,53 +642,12 @@
                             }
                             
                             // Note: With timeout=0, output variables are typically empty (expected behavior)
-                            // We rely on the debug log file check above to verify script execution
-                            // The debug log check will show if the script started successfully
-                            
-                            // Note: Process detection is unreliable when script runs in background
-                            // Instead, we rely on database updates to verify script is running
+                            // We rely on database updates to verify script is running
                             // The script will update job_statistics and scrape_logs tables in real-time
                             logToDatabase(jobId, 'info', 'Script launched in background - monitoring via database updates', 'system');
                             
-                            // Optional: Quick process check (non-blocking, don't fail if not found)
-                            try {
-                                sleep(3000); // Wait 3 seconds for script to start
-                                processCheck = "";
-                                cfexecute(
-                                    name = "wmic",
-                                    arguments = 'process where "name=''node.exe''" get ProcessId,CommandLine /format:list',
-                                    timeout = 3,
-                                    variable = "processCheck"
-                                );
-                                // Check for both filename and event-id in command line
-                                if (findNoCase("scrape_single_event.js", processCheck) > 0 || 
-                                    (findNoCase("node.exe", processCheck) > 0 && findNoCase("--event-id", processCheck) > 0 && findNoCase(trim(targetEventId), processCheck) > 0)) {
-                                    logToDatabase(jobId, 'info', 'Node.js process detected - script is running', 'system');
-                                } else {
-                                    logToDatabase(jobId, 'info', 'Process not immediately detected (normal for background execution) - monitoring via database', 'system');
-                                }
-                            } catch (any procErr) {
-                                // Don't log as error - process detection is optional
-                                logToDatabase(jobId, 'debug', 'Process check skipped (non-critical): ' & procErr.message, 'system');
-                            }
-                            
-                            // Check debug log for immediate startup confirmation
-                            if (fileExists(debugLogPath)) {
-                                try {
-                                    sleep(2000); // Wait a bit more for script to write to log
-                                    debugLogContent = fileRead(debugLogPath);
-                                    // Get last 1500 characters (recent entries)
-                                    if (len(debugLogContent) > 1500) {
-                                        debugLogContent = right(debugLogContent, 1500);
-                                    }
-                                    // Only log if there are new entries (not just old ones)
-                                    if (findNoCase("Script started: eventId=" & trim(targetEventId), debugLogContent) > 0) {
-                                        logToDatabase(jobId, 'info', 'Debug log confirms script started for event ' & trim(targetEventId), 'system');
-                                    }
-                                } catch (any readErr) {
-                                    // Non-critical
-                                }
-                            }
+                            // Set success immediately - don't wait for debug log checks
+                            // Debug log verification will happen asynchronously via monitoring
                             
                         } catch (any cfexecErr) {
                             // Handle cfexecute errors
@@ -1095,7 +975,6 @@
                             pausedAt: structKeyExists(row, "paused_at") ? row.paused_at : "",
                             stoppedAt: structKeyExists(row, "stopped_at") ? row.stopped_at : "",
                             processId: structKeyExists(row, "process_id") ? row.process_id : "",
-                            maxSales: structKeyExists(row, "max_sales") ? row.max_sales : "",
                             targetEventId: structKeyExists(row, "target_event_id") ? row.target_event_id : "",
                             runMode: structKeyExists(row, "run_mode") ? row.run_mode : "",
                             errorMessage: structKeyExists(row, "error_message") ? row.error_message : "",
@@ -1445,12 +1324,10 @@
                 scrCmd = '/c cd /d "' & workDir & '" && "' & paths.nodeBinary & '" "' & paths.scraper & '"';
         }
         
-        // Add parameters based on run mode (event-id takes precedence over max-sales)
+        // Add parameters based on run mode
         if (runMode == "one" AND len(trim(targetEventId))) {
             scrCmd &= ' --event-id ' & trim(targetEventId);
-        } else if (runMode == "max" AND len(trim(maxSales)) AND isNumeric(maxSales)) {
-            scrCmd &= ' --max-sales ' & maxSales;
-                }
+        }
                 
                 // Add the new file name as parameter
         scrCmd &= ' --output-file "' & newFileName & '"';
@@ -1979,8 +1856,6 @@
         if (len(trim(targetEventId))) {
             scrCmd &= ' --event-id ' & trim(targetEventId);
             scrCmd &= ' --output-file "auction_' & trim(targetEventId) & '_lots.jsonl"';
-        } else if (runMode == "max" AND len(trim(maxSales)) AND isNumeric(maxSales)) {
-            scrCmd &= ' --max-sales ' & maxSales;
         }
         // For "all" mode, no additional parameters needed
         
@@ -3215,7 +3090,6 @@
                     action: 'start',
                     runMode: $('input[name="runMode"]:checked').val(),
                     eventId: $('#eventId').val(),
-                    maxSales: $('#maxSales').val(),
                     ajax: 1
                 };
                 $.ajax({
@@ -3675,28 +3549,19 @@
                 console.log('Run mode changed to:', selectedMode);
                 
                 $('#eventIdGroup').hide();
-                $('#maxSalesGroup').hide();
                 
                 if (selectedMode === 'one') {
                     $('#eventIdGroup').show();
-                } else if (selectedMode === 'max') {
-                    $('#maxSalesGroup').show();
                 }
             }
 
             function handleQuickAction(e) {
                 const btn = $(e.currentTarget);
                 const eventId = btn.data('event');
-                const maxSales = btn.data('max');
                 console.log(eventId);
                 if (eventId) {
                     $('#mode-one').prop('checked', true);
                     $('#eventId').val(eventId);
-                    handleRunModeChange();
-                    startScraping();
-                } else if (maxSales) {
-                    $('#mode-max').prop('checked', true);
-                    $('#maxSales').val(maxSales);
                     handleRunModeChange();
                     startScraping();
                 }

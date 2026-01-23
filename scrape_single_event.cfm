@@ -101,6 +101,16 @@ if (shouldInsert) {
             variable      = "insOut",
             errorVariable = "insErr"
         );
+        
+        // After insertion is complete, delete in-progress file if it still exists
+        if (fileExists(outPath)) {
+            try {
+                fileDelete(outPath);
+                writeOutput("<p style='color: green'><strong>✓ Cleaned up in-progress file after insertion</strong></p>");
+            } catch (any delErr) {
+                writeOutput("<p style='color: orange'><strong>Note:</strong> Could not delete in-progress file: " & encodeForHtml(delErr.message) & "</p>");
+            }
+        }
     }
 }
 </cfscript>

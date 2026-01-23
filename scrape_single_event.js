@@ -115,6 +115,59 @@ fs.mkdirSync(profileDir, { recursive: true })
 
 function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`) }
 
+/**
+ * Check if auction is already inserted in database
+ * Checks sales table, uploaded_files table, and lots table
+ * @param {string} auctionId - Auction ID to check
+ * @returns {Promise<boolean>} - True if auction is already inserted
+ */
+async function isAuctionAlreadyInserted(auctionId) {
+    if (!auctionId || !pool) return false;
+    try {
+        // Check 1: sales table - check if sale exists with this auctionId
+        const salesCheck = await pool.query(
+            `SELECT s.sale_pk 
+             FROM sales s 
+             JOIN auction_houses ah ON s.sale_firm_fk = ah.firm_pk 
+             WHERE ah.firm_id = $1 AND s.sale_no = $1 
+             LIMIT 1`,
+            [auctionId]
+        );
+        if (salesCheck.rows.length > 0) {
+            return true;
+        }
+
+        // Check 2: uploaded_files table - check if file is marked as completed
+        const fileName = `auction_${auctionId}_lots.json`;
+        const uploadedCheck = await pool.query(
+            `SELECT status FROM uploaded_files WHERE file_name = $1 AND status = 'Completed' LIMIT 1`,
+            [fileName]
+        );
+        if (uploadedCheck.rows.length > 0) {
+            return true;
+        }
+
+        // Check 3: lots table - check if lots exist for this sale
+        const lotsCheck = await pool.query(
+            `SELECT COUNT(*) as lot_count 
+             FROM lots l 
+             JOIN sales s ON l.lot_sale_fk = s.sale_pk 
+             JOIN auction_houses ah ON s.sale_firm_fk = ah.firm_pk 
+             WHERE ah.firm_id = $1 AND s.sale_no = $1`,
+            [auctionId]
+        );
+        if (lotsCheck.rows.length > 0 && parseInt(lotsCheck.rows[0].lot_count) > 0) {
+            return true;
+        }
+
+        return false;
+    } catch (err) {
+        console.error(`[DB Check Error] ${err.message}`);
+        // On error, return false to allow processing (fail-safe)
+        return false;
+    }
+}
+
 // Database functions for job tracking
 async function logToDatabase(jobId, level, message, source = 'scraper', metadata = {}) {
     if (!jobId) return;
@@ -686,6 +739,59 @@ try {
       const debugLogFile = path.resolve(__dirname, 'scrape_debug.log');
       fs.appendFileSync(debugLogFile, `[${new Date().toISOString()}] [INFO] No jobId provided (jobId=${jobId}), skipping database tracking\n`);
     } catch (e) {}
+  }
+  
+  // Check if auction is already scraped and inserted - skip if complete
+  const finalFileExists = fs.existsSync(finalFile);
+  let alreadyInserted = false;
+  
+  if (pool && eventId) {
+    try {
+      alreadyInserted = await isAuctionAlreadyInserted(eventId);
+    } catch (checkErr) {
+      console.warn(`[SKIP CHECK] Failed to check if auction is already inserted: ${checkErr.message}`);
+      // Continue processing if check fails (fail-safe)
+    }
+  }
+  
+  if (finalFileExists && alreadyInserted) {
+    console.log(`⏭ Skipping auction ${eventId} - already scraped and inserted`);
+    log(`Auction ${eventId} is already complete (final file exists and marked as Completed in database)`);
+    
+    if (jobId && pool) {
+      try {
+        await logToDatabase(jobId, 'info', `Skipped auction ${eventId} - already scraped and inserted`, 'scraper', {
+          eventId: eventId,
+          reason: 'Already complete'
+        });
+        await updateJobStatistics(jobId, {
+          totalEvents: 1,
+          processedEvents: 1,
+          totalLots: 0,
+          processedLots: 0,
+          filesCreated: 0,
+          filesCompleted: 1
+        });
+        await pool.query(
+          `UPDATE scraper_jobs SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [jobId]
+        );
+        console.log(`[SUCCESS] Job ${jobId} marked as completed (auction already done)`);
+      } catch (updateErr) {
+        console.error(`[ERROR] Failed to update job status: ${updateErr.message}`);
+      }
+    }
+    
+    // Exit gracefully
+    process.exitCode = 0;
+    console.log(`[SUCCESS] Script completed - auction already processed`);
+    process.exit(0);
+  } else if (finalFileExists && !alreadyInserted) {
+    console.log(`ℹ️  Final file exists for auction ${eventId}, but not marked as inserted. Will re-scrape.`);
+    log(`Final file exists but auction not in database - will re-scrape`);
+  } else if (!finalFileExists && alreadyInserted) {
+    console.log(`ℹ️  Auction ${eventId} is in database but no final file. Will re-scrape.`);
+    log(`Auction in database but no final file - will re-scrape`);
   }
   
   // Log to debug file that we're proceeding to browser launch (ALWAYS, regardless of jobId)
@@ -1345,6 +1451,13 @@ try {
     const lines = fs.readFileSync(inProgressFile, 'utf-8')
       .split('\n').filter(Boolean).map(l => JSON.parse(l))
     fs.writeFileSync(finalFile, JSON.stringify(lines, null, 2))
+    
+    // Delete in-progress file after successfully writing final file
+    if (fs.existsSync(inProgressFile)) {
+      fs.unlinkSync(inProgressFile)
+      console.log(`[CLEANUP] Deleted in-progress file: ${inProgressFile}`)
+      log(`Deleted in-progress file after completion`)
+    }
     
     // Final statistics update
     if (jobId) {
