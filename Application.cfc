@@ -117,7 +117,7 @@ component {
                 embedDim: 1536,
                 chatModel: "gpt-4o-mini",
                 apiBaseUrl: "https://api.openai.com/v1",
-                timeout: 90,
+                timeout: 180,
                 maxChars: 12000,
                 maxItems: 30
             },
